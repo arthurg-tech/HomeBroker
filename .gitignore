@@ -1,0 +1,18 @@
+# .NET
+**/bin/
+**/obj/
+
+# Node / React
+**/node_modules/
+**/dist/
+
+# Configurações locais
+.vs/
+*.user
+*.suo
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log

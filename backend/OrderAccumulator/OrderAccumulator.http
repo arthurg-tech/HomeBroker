@@ -1,0 +1,6 @@
+@OrderAccumulator_HostAddress = http://localhost:5177
+
+GET {{OrderAccumulator_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
