@@ -161,6 +161,59 @@ public class ExposureServiceTests
         Assert.Equal(0m, service.GetExposure("VIIA4"));
     }
 
+    [Fact]
+    public async Task ConcurrentPurchasesAcceptTenOrdersAndRejectTenAtThePositiveLimit()
+    {
+        await AssertConcurrentOrders("C", 1_000_000m);
+    }
+
+    [Fact]
+    public async Task ConcurrentSalesAcceptTenOrdersAndRejectTenAtTheNegativeLimit()
+    {
+        await AssertConcurrentOrders("V", -1_000_000m);
+    }
+
+    private static async Task AssertConcurrentOrders(string side, decimal expectedExposure)
+    {
+        var service = new ExposureService();
+        var order = Order(side, 1_000, 100m);
+        using var startBarrier = new Barrier(21);
+
+        Assert.Equal(0m, service.GetExposure("PETR4"));
+
+        // Dedicated threads allow all 20 participants to reach the barrier
+        // without depending on thread-pool growth while workers are blocked.
+        var tasks = Enumerable.Range(0, 20)
+            .Select(_ => Task.Factory.StartNew(() =>
+            {
+                startBarrier.SignalAndWait();
+                return service.Process(order);
+            }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default))
+            .ToArray();
+
+        startBarrier.SignalAndWait();
+        var responses = await Task.WhenAll(tasks);
+        var accepted = responses.Where(response => response.Sucesso).ToArray();
+        var rejected = responses.Where(response => !response.Sucesso).ToArray();
+
+        Assert.Equal(10, accepted.Length);
+        Assert.Equal(10, rejected.Length);
+        Assert.Equal(expectedExposure, service.GetExposure("PETR4"));
+
+        // Compare the values as a set of sorted results, not by task order.
+        var expectedAcceptedExposures = Enumerable.Range(1, 10)
+            .Select(index => index * expectedExposure / 10)
+            .OrderBy(exposure => exposure);
+        Assert.Equal(expectedAcceptedExposures,
+            accepted.Select(response => response.ExposicaoAtual).OrderBy(exposure => exposure));
+        Assert.All(accepted, response => Assert.Equal("", response.MsgErro));
+        Assert.All(rejected, response =>
+        {
+            Assert.Equal(expectedExposure, response.ExposicaoAtual);
+            Assert.Equal("A ordem ultrapassa o limite de exposição do ativo PETR4.", response.MsgErro);
+        });
+    }
+
     private static OrderRequest Order(string side, int quantity, decimal price, string asset = "PETR4") => new()
     {
         Ativo = asset,
