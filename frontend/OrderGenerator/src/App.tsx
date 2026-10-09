@@ -99,13 +99,13 @@ function App() {
                   <label htmlFor="price">Preço por ação <span aria-hidden="true">*</span></label>
                   <div className="input-with-prefix"><span aria-hidden="true">R$</span>
                     <input id="price" name="preco" type="text" inputMode="decimal" min="0.01" max="999.99" step="0.01" required
-                      value={form.preco} placeholder="0,00" aria-invalid={Boolean(errors.preco)}
+                      value={form.preco} placeholder="Ex.: 54,87" aria-invalid={Boolean(errors.preco)}
                       aria-describedby={errors.preco ? 'price-error' : 'price-hint'}
                       onChange={(event) => updateField('preco', event.currentTarget.value)} />
                   </div>
                   {errors.preco
                     ? <p className="field-error" id="price-error">{errors.preco}</p>
-                    : <p className="field-hint" id="price-hint">De R$ 0,01 a R$ 999,99. Use vírgula ou ponto, sem separador de milhar.</p>}
+                    : <p className="field-hint" id="price-hint">Preço de uma ação (não o total). Ex.: R$ 54,87. Use até 2 casas decimais; não use ponto para milhar.</p>}
                 </div>
               </div>
 

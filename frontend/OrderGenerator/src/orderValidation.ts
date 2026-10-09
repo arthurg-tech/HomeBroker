@@ -33,7 +33,7 @@ export function parsePriceToCents(value: string): bigint | null {
   if (!match) return null
 
   const [, whole, fraction = ''] = match
-  if ([...fraction.slice(2)].some((digit) => digit !== '0')) return null
+  if (fraction.length > 2) return null
 
   const cents = BigInt(whole) * 100n + BigInt(fraction.slice(0, 2).padEnd(2, '0') || '00')
   return cents >= 1n && cents <= 99_999n ? cents : null
@@ -56,7 +56,7 @@ export function validateOrderForm(form: OrderFormValues): OrderFormValidation {
   if (!form.preco.trim()) {
     errors.preco = 'Informe o preço por ação.'
   } else if (priceInCents === null) {
-    errors.preco = 'Use um valor de R$ 0,01 a R$ 999,99 em centavos, sem arredondar.'
+    errors.preco = 'Use até 2 casas decimais, de R$ 0,01 a R$ 999,99, sem separador de milhar e sem arredondar.'
   }
 
   if (Object.keys(errors).length > 0) return { errors }
