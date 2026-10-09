@@ -1,0 +1,13 @@
+{
+  "name": "homebroker",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "dev:api": "dotnet run --project backend/OrderAccumulator --launch-profile http",
+    "dev:web": "npm --prefix frontend/OrderGenerator run dev",
+    "dev": "concurrently --kill-others --names API,WEB npm:dev:api npm:dev:web"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.6"
+  }
+}
