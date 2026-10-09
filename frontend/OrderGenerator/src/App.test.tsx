@@ -162,4 +162,69 @@ describe('OrderGenerator form', () => {
     expect(screen.getByText((_content, element) => element?.tagName === 'PRE'))
       .toHaveTextContent('"exposicao_atual": 990000')
   })
+
+  it('shows the pending state and disables submission until the API responds', async () => {
+    let resolveResponse!: (response: Response) => void
+    const fetchMock = vi.fn(() => new Promise<Response>((resolve) => {
+      resolveResponse = resolve
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.type(screen.getByRole('spinbutton', { name: 'Quantidade' }), '2')
+    await user.type(screen.getByRole('textbox', { name: 'Preço por ação' }), '54,87')
+    await user.click(screen.getByRole('button', { name: 'Enviar ordem' }))
+
+    const pendingButton = await screen.findByRole('button', { name: 'Enviando…' })
+    expect(pendingButton).toBeDisabled()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    resolveResponse(successfulResponse(109.74))
+
+    expect(await screen.findByText('Ordem aceita com sucesso.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Enviar ordem' })).toBeEnabled()
+  })
+
+  it('reports a network failure without claiming rejection or showing an exposure', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'))
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.type(screen.getByRole('spinbutton', { name: 'Quantidade' }), '2')
+    await user.type(screen.getByRole('textbox', { name: 'Preço por ação' }), '54,87')
+    await user.click(screen.getByRole('button', { name: 'Enviar ordem' }))
+
+    expect(await screen.findByRole('heading', { name: 'Falha de comunicação' })).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent('Não foi possível confirmar a resposta')
+    expect(screen.queryByText('Resposta da API')).not.toBeInTheDocument()
+    expect(screen.queryByText('Exposição atual')).not.toBeInTheDocument()
+    expect(screen.queryByText(/rejeitada pelo servidor/i)).not.toBeInTheDocument()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('treats an unexpected HTTP response as unconfirmed and hides its body', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      sucesso: false,
+      exposicao_atual: 0,
+      msg_erro: 'Falha interna.',
+    }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.type(screen.getByRole('spinbutton', { name: 'Quantidade' }), '2')
+    await user.type(screen.getByRole('textbox', { name: 'Preço por ação' }), '54,87')
+    await user.click(screen.getByRole('button', { name: 'Enviar ordem' }))
+
+    expect(await screen.findByRole('heading', { name: 'Falha de comunicação' })).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent('Não foi possível confirmar a resposta')
+    expect(screen.queryByText('Resposta da API')).not.toBeInTheDocument()
+    expect(screen.queryByText('Exposição atual')).not.toBeInTheDocument()
+    expect(screen.queryByText('Falha interna.')).not.toBeInTheDocument()
+  })
 })
