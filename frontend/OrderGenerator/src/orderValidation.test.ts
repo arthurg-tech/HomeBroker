@@ -7,14 +7,12 @@ describe('price validation', () => {
     ['0,01', 1n],
     ['54.87', 5_487n],
     ['54,87', 5_487n],
-    ['10.000', 1_000n],
-    ['10,000', 1_000n],
     ['999.99', 99_999n],
   ])('converts %s to exact cents', (text, expected) => {
     expect(parsePriceToCents(text)).toBe(expected)
   })
 
-  it.each(['', '0', '1000', '10.001', '10,001', '1.234,56', '1,234.56', '-1.00', '1e2', '.50', '10,'])(
+  it.each(['', '0', '1000', '10.000', '10,000', '10.001', '10,001', '1.234,56', '1,234.56', '-1.00', '1e2', '.50', '10,'])(
     'rejects invalid decimal input %s without rounding', (text) => {
       expect(parsePriceToCents(text)).toBeNull()
     },
