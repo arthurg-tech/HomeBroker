@@ -120,7 +120,6 @@ function App() {
 
           <aside className="side-column" aria-label="Informações sobre a ordem">
             <section className="info-card">
-              <div className="info-icon" aria-hidden="true">↗</div>
               <h2>Como funciona</h2>
               <p>Ordens aceitas atualizam a exposição financeira do ativo escolhido.</p>
               <div className="side-explanations">
@@ -129,7 +128,6 @@ function App() {
               </div>
               <div className="limit-note"><span aria-hidden="true">i</span><p>Limite de <strong>R$ 1.000.000</strong> por ativo, em valor absoluto.</p></div>
             </section>
-            <div className="api-note"><span className="status-dot" /><p>API de ordens configurada</p></div>
           </aside>
         </div>
 
