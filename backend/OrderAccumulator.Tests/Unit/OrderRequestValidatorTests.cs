@@ -2,7 +2,7 @@ using System.Text.Json;
 using OrderAccumulator.Contracts;
 using OrderAccumulator.Validation;
 
-namespace OrderAccumulator.Tests;
+namespace OrderAccumulator.Tests.Unit;
 
 public class OrderRequestValidatorTests
 {

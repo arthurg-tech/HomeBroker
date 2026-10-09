@@ -22,11 +22,7 @@ public sealed class ExposureService
             var errors = OrderRequestValidator.Validate(order);
             if (errors.Count > 0)
             {
-                var current = order?.Ativo is { } asset && _exposures.TryGetValue(asset, out var exposure)
-                    ? exposure
-                    : 0m;
-
-                return new OrderResponse(false, current, string.Join(" ", errors));
+                return CreateInvalidResponse(order?.Ativo, string.Join(" ", errors));
             }
 
             var validAsset = order!.Ativo!;
@@ -45,6 +41,20 @@ public sealed class ExposureService
             _exposures[validAsset] = resultingExposure;
             return new OrderResponse(true, resultingExposure, "");
         }
+    }
+
+    public OrderResponse RejectInvalidRequest(string? asset, string message)
+    {
+        lock (_sync)
+        {
+            return CreateInvalidResponse(asset, message);
+        }
+    }
+
+    private OrderResponse CreateInvalidResponse(string? asset, string message)
+    {
+        var current = asset is not null && _exposures.TryGetValue(asset, out var exposure) ? exposure : 0m;
+        return new OrderResponse(false, current, message);
     }
 
     public decimal GetExposure(string asset)

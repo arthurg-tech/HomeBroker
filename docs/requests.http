@@ -1,0 +1,65 @@
+@baseUrl = http://localhost:5177
+
+# Execute na ordem indicada com o backend recém-iniciado (exposições em zero).
+# Repetir uma ordem aceita contabiliza uma nova ordem.
+
+### Sucesso: HTTP 200, PETR4 em 32044.08
+POST {{baseUrl}}/api/ordens
+Content-Type: application/json
+
+{
+  "ativo": "PETR4",
+  "lado": "C",
+  "quantidade": 584,
+  "preco": 54.87
+}
+
+### Entrada inválida: HTTP 400, PETR4 permanece em 32044.08
+POST {{baseUrl}}/api/ordens
+Content-Type: application/json
+
+{
+  "ativo": "PETR4",
+  "lado": "C",
+  "quantidade": 0,
+  "preco": 54.87
+}
+
+### Tipo inválido: HTTP 400, PETR4 permanece em 32044.08
+POST {{baseUrl}}/api/ordens
+Content-Type: application/json
+
+{
+  "ativo": "PETR4",
+  "lado": "C",
+  "quantidade": "584",
+  "preco": 54.87
+}
+
+### JSON malformado: HTTP 400, exposicao_atual = 0 por convenção
+POST {{baseUrl}}/api/ordens
+Content-Type: application/json
+
+{"ativo":"PETR4",
+
+### Preparar o limite: HTTP 200, VALE3 em 1000000
+POST {{baseUrl}}/api/ordens
+Content-Type: application/json
+
+{
+  "ativo": "VALE3",
+  "lado": "C",
+  "quantidade": 10000,
+  "preco": 100
+}
+
+### Rejeição por limite: HTTP 422, VALE3 permanece em 1000000
+POST {{baseUrl}}/api/ordens
+Content-Type: application/json
+
+{
+  "ativo": "VALE3",
+  "lado": "C",
+  "quantidade": 1,
+  "preco": 0.01
+}

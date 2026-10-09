@@ -1,7 +1,7 @@
 using OrderAccumulator.Contracts;
 using OrderAccumulator.Services;
 
-namespace OrderAccumulator.Tests;
+namespace OrderAccumulator.Tests.Unit;
 
 public class ExposureServiceTests
 {
