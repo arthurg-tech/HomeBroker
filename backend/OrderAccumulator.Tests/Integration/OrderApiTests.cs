@@ -71,6 +71,7 @@ public class OrderApiTests
     {
         """ "lado":"Compra","quantidade":1,"preco":1 """,
         """ "lado":"c","quantidade":1,"preco":1 """,
+        """ "lado":"","quantidade":1,"preco":1 """,
         """ "lado":true,"quantidade":1,"preco":1 """,
         """ "lado":null,"quantidade":1,"preco":1 """,
         """ "quantidade":1,"preco":1 """,
@@ -116,6 +117,7 @@ public class OrderApiTests
     [InlineData("true")]
     [InlineData("{}")]
     [InlineData("""{"lado":"C","quantidade":1,"preco":1}""")]
+    [InlineData("""{"ativo":"","lado":"C","quantidade":1,"preco":1}""")]
     [InlineData("""{"ativo":"petr4","lado":"C","quantidade":1,"preco":1}""")]
     [InlineData("""{"ativo":"ABEV3","lado":"C","quantidade":1,"preco":1}""")]
     [InlineData("""{"ativo":null,"lado":"C","quantidade":1,"preco":1}""")]
