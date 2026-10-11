@@ -1,12 +1,15 @@
 using OrderAccumulator.Application.Orders;
 using OrderAccumulator.Contracts;
 using OrderAccumulator.Services;
+using OrderAccumulator.Tests.Support;
 using OrderAccumulator.Validation;
 
 namespace OrderAccumulator.Tests.Unit;
 
 public class ExposureServiceTests
 {
+    private static readonly TimeSpan ConcurrentTestTimeout = TimeSpan.FromSeconds(30);
+
     [Theory]
     [InlineData("PETR4")]
     [InlineData("VALE3")]
@@ -242,26 +245,75 @@ public class ExposureServiceTests
         await AssertConcurrentOrders("V", -1_000_000m);
     }
 
+    [Theory]
+    [InlineData("C", false)]
+    [InlineData("V", false)]
+    [InlineData("C", true)]
+    public async Task ConcurrentMixedOrdersKeepEachExposureEqualToAcceptedOrders(string initialSide,
+        bool multipleAssets)
+    {
+        var service = new ExposureService();
+        var scenario = ConcurrentOrderScenarios.CreateMixed(initialSide, multipleAssets);
+        foreach (var seed in scenario.Seeds)
+        {
+            Assert.Equal(OrderProcessingStatus.Accepted, service.Process(seed).Status);
+            Assert.Equal(scenario.InitialExposures[seed.Ativo!], service.GetExposure(seed.Ativo!));
+        }
+
+        var responses = await RunConcurrentOrders(service, scenario.Orders);
+        var outcomes = scenario.Orders.Zip(responses, (order, result) => (Order: order, Result: result)).ToArray();
+
+        foreach (var (asset, initialExposure) in scenario.InitialExposures)
+        {
+            var assetOutcomes = outcomes.Where(outcome => outcome.Order.Ativo == asset).ToArray();
+            Assert.All(assetOutcomes, outcome =>
+            {
+                Assert.InRange(outcome.Result.Exposure, -1_000_000m, 1_000_000m);
+                if (outcome.Order.Quantidade == 0)
+                {
+                    Assert.Equal(OrderProcessingStatus.InvalidInput, outcome.Result.Status);
+                    Assert.Equal("Quantidade deve ser um inteiro entre 1 e 99.999.", outcome.Result.ErrorMessage);
+                }
+                else if (outcome.Result.Status == OrderProcessingStatus.Accepted)
+                {
+                    Assert.Equal("", outcome.Result.ErrorMessage);
+                }
+                else
+                {
+                    Assert.Equal(OrderProcessingStatus.ExposureLimitExceeded, outcome.Result.Status);
+                    Assert.True(Math.Abs(outcome.Result.Exposure + ConcurrentOrderScenarios.SignedAmount(outcome.Order))
+                        > 1_000_000m, "Uma rejeição por limite deve ser justificada pela exposição retornada.");
+                    Assert.Equal($"A ordem ultrapassa o limite de exposição do ativo {asset}.",
+                        outcome.Result.ErrorMessage);
+                }
+            });
+
+            Assert.Equal(2, assetOutcomes.Count(outcome => outcome.Order.Quantidade == 99_999
+                && outcome.Result.Status == OrderProcessingStatus.ExposureLimitExceeded));
+            Assert.Single(assetOutcomes, outcome => outcome.Result.Status == OrderProcessingStatus.InvalidInput);
+            var accepted = assetOutcomes.Where(outcome => outcome.Result.Status == OrderProcessingStatus.Accepted).ToArray();
+            Assert.Contains(accepted, outcome => outcome.Order.Lado == "C");
+            Assert.Contains(accepted, outcome => outcome.Order.Lado == "V");
+
+            // O resultado depende da ordem de aquisição do lock; a soma das ordens aceitas é o oráculo.
+            var expectedExposure = initialExposure + accepted.Sum(outcome => ConcurrentOrderScenarios.SignedAmount(outcome.Order));
+            Assert.Equal(expectedExposure, service.GetExposure(asset));
+            Assert.Equal(expectedExposure, service.FindExposure(asset));
+        }
+
+        if (!multipleAssets)
+        {
+            Assert.Equal(0m, service.GetExposure("VALE3"));
+            Assert.Equal(0m, service.GetExposure("VIIA4"));
+        }
+    }
+
     private static async Task AssertConcurrentOrders(string side, decimal expectedExposure)
     {
         var service = new ExposureService();
         var order = Order(side, 1_000, 100m);
-        using var startBarrier = new Barrier(21);
-
         Assert.Equal(0m, service.GetExposure("PETR4"));
-
-        // Dedicated threads allow all 20 participants to reach the barrier
-        // without depending on thread-pool growth while workers are blocked.
-        var tasks = Enumerable.Range(0, 20)
-            .Select(_ => Task.Factory.StartNew(() =>
-            {
-                startBarrier.SignalAndWait();
-                return service.Process(order);
-            }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default))
-            .ToArray();
-
-        startBarrier.SignalAndWait();
-        var responses = await Task.WhenAll(tasks);
+        var responses = await RunConcurrentOrders(service, Enumerable.Repeat(order, 20).ToArray());
         var accepted = responses.Where(response => response.Status == OrderProcessingStatus.Accepted).ToArray();
         var rejected = responses.Where(response => response.Status != OrderProcessingStatus.Accepted).ToArray();
 
@@ -282,6 +334,42 @@ public class ExposureServiceTests
             Assert.Equal(expectedExposure, response.Exposure);
             Assert.Equal("A ordem ultrapassa o limite de exposição do ativo PETR4.", response.ErrorMessage);
         });
+    }
+
+    private static async Task<OrderProcessingResult[]> RunConcurrentOrders(ExposureService service,
+        IReadOnlyList<OrderRequest> orders)
+    {
+        using var cancellation = new CancellationTokenSource(ConcurrentTestTimeout);
+        using var startBarrier = new Barrier(orders.Count + 1);
+
+        // Threads dedicadas permitem que todos alcancem a barreira sem depender do crescimento do ThreadPool.
+        var tasks = orders.Select(order => Task.Factory.StartNew(() =>
+        {
+            Assert.True(startBarrier.SignalAndWait(TimeSpan.FromSeconds(10), cancellation.Token),
+                "Os participantes não alcançaram a barreira no prazo esperado.");
+            cancellation.Token.ThrowIfCancellationRequested();
+            return service.Process(order);
+        }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default)).ToArray();
+        var completion = Task.WhenAll(tasks);
+
+        try
+        {
+            Assert.True(startBarrier.SignalAndWait(TimeSpan.FromSeconds(10), cancellation.Token),
+                "Os participantes não alcançaram a barreira no prazo esperado.");
+            return await completion.WaitAsync(ConcurrentTestTimeout, cancellation.Token);
+        }
+        finally
+        {
+            await cancellation.CancelAsync();
+            try
+            {
+                await completion.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            catch (Exception)
+            {
+                // A limpeza é limitada e não deve substituir a falha original do teste.
+            }
+        }
     }
 
     private static OrderRequest Order(string side, int quantity, decimal price, string asset = "PETR4") => new()
