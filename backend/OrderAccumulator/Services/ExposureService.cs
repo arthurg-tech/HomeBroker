@@ -15,14 +15,18 @@ public sealed class ExposureService
         ["VIIA4"] = 0m,
     };
 
-    public OrderResponse Process(OrderRequest? order)
+    public OrderProcessingResult Process(OrderRequest? order)
     {
         lock (_sync)
         {
             var errors = OrderRequestValidator.Validate(order);
             if (errors.Count > 0)
             {
-                return CreateInvalidResponse(order?.Ativo, string.Join(" ", errors));
+                var current = order?.Ativo is not null && _exposures.TryGetValue(order.Ativo, out var exposure)
+                    ? exposure
+                    : 0m;
+                return new OrderProcessingResult(OrderProcessingStatus.InvalidInput, current,
+                    string.Join(" ", errors));
             }
 
             var validAsset = order!.Ativo!;
@@ -34,27 +38,21 @@ public sealed class ExposureService
 
             if (Math.Abs(resultingExposure) > ExposureLimit)
             {
-                return new OrderResponse(false, currentExposure,
+                return new OrderProcessingResult(OrderProcessingStatus.ExposureLimitExceeded, currentExposure,
                     $"A ordem ultrapassa o limite de exposição do ativo {validAsset}.");
             }
 
             _exposures[validAsset] = resultingExposure;
-            return new OrderResponse(true, resultingExposure, "");
+            return new OrderProcessingResult(OrderProcessingStatus.Accepted, resultingExposure, "");
         }
     }
 
-    public OrderResponse RejectInvalidRequest(string? asset, string message)
+    public decimal? FindExposure(string? asset)
     {
         lock (_sync)
         {
-            return CreateInvalidResponse(asset, message);
+            return asset is not null && _exposures.TryGetValue(asset, out var exposure) ? exposure : null;
         }
-    }
-
-    private OrderResponse CreateInvalidResponse(string? asset, string message)
-    {
-        var current = asset is not null && _exposures.TryGetValue(asset, out var exposure) ? exposure : 0m;
-        return new OrderResponse(false, current, message);
     }
 
     public decimal GetExposure(string asset)

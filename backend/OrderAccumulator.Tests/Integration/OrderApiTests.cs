@@ -185,6 +185,38 @@ public class OrderApiTests
         await AssertExposureWasPreserved(client);
     }
 
+    [Theory]
+    [InlineData("{", HttpStatusCode.BadRequest, false,
+        "O corpo deve conter um JSON válido.")]
+    [InlineData("[]", HttpStatusCode.BadRequest, false,
+        "O corpo deve ser um objeto JSON com os campos da ordem.")]
+    [InlineData("""{"ativo":"PETR4","lado":"C","quantidade":"1","preco":1}""",
+        HttpStatusCode.BadRequest, true,
+        "Tipos inválidos: ativo e lado devem ser textos, quantidade um inteiro e preco um número decimal.")]
+    [InlineData("""{"ativo":"PETR4","lado":"C","quantidade":0,"preco":1}""",
+        HttpStatusCode.BadRequest, true,
+        "Quantidade deve ser um inteiro entre 1 e 99.999.")]
+    [InlineData("""{"ativo":"PETR4","lado":"Compra","quantidade":0,"preco":1}""",
+        HttpStatusCode.BadRequest, true,
+        "Lado deve ser C (compra) ou V (venda). Quantidade deve ser um inteiro entre 1 e 99.999.")]
+    [InlineData("""{"ativo":"PETR4","lado":"C","quantidade":10001,"preco":100}""",
+        HttpStatusCode.UnprocessableEntity, true,
+        "A ordem ultrapassa o limite de exposição do ativo PETR4.")]
+    public async Task RejectionsPreserveStatusesMessagesAndExposure(string json, HttpStatusCode status,
+        bool identifiesAsset, string expectedMessage)
+    {
+        await using var factory = new OrderApiFactory();
+        using var client = factory.CreateClient();
+        await SeedExposure(client);
+
+        using var response = await PostJson(client, json);
+
+        await AssertResponse(response, status, false, identifiesAsset ? 54.87m : 0m);
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal(expectedMessage, document.RootElement.GetProperty("msg_erro").GetString());
+        await AssertExposureWasPreserved(client);
+    }
+
     public static TheoryData<string> InvalidFields => new()
     {
         """ "lado":"Compra","quantidade":1,"preco":1 """,
@@ -269,6 +301,9 @@ public class OrderApiTests
 
         using var response = await client.PostAsync("/api/ordens", body);
         await AssertResponse(response, HttpStatusCode.BadRequest, false, 0m);
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("Content-Type deve ser application/json.",
+            document.RootElement.GetProperty("msg_erro").GetString());
         await AssertExposureWasPreserved(client);
     }
 
