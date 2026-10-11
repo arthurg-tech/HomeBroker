@@ -1,9 +1,10 @@
 import { useState, type FormEvent } from 'react'
 import { sendOrder } from './orderApi'
+import { NumericInput } from './NumericInput'
 import { ASSETS, validateOrderForm, type OrderFormValues, type OrderResponse } from './orderValidation'
 import './App.css'
 
-const initialForm: OrderFormValues = { ativo: 'PETR4', lado: 'Compra', quantidade: '', preco: '' }
+const initialForm: OrderFormValues = { ativo: 'PETR4', lado: 'Compra', quantidade: '', preco: '0,00' }
 
 function App() {
   const [form, setForm] = useState(initialForm)
@@ -86,10 +87,10 @@ function App() {
 
                 <div className="field">
                   <label htmlFor="quantity">Quantidade <span aria-hidden="true">*</span></label>
-                  <input id="quantity" name="quantidade" type="number" inputMode="numeric" min="1" max="99999" step="1" required
+                  <NumericInput id="quantity" name="quantidade" required
                     value={form.quantidade} placeholder="Ex.: 100" aria-invalid={Boolean(errors.quantidade)}
                     aria-describedby={errors.quantidade ? 'quantity-error' : 'quantity-hint'}
-                    onChange={(event) => updateField('quantidade', event.currentTarget.value)} />
+                    onValueChange={(value) => updateField('quantidade', value)} />
                   {errors.quantidade
                     ? <p className="field-error" id="quantity-error">{errors.quantidade}</p>
                     : <p className="field-hint" id="quantity-hint">De 1 a 99.999 ações</p>}
@@ -98,14 +99,14 @@ function App() {
                 <div className="field">
                   <label htmlFor="price">Preço por ação <span aria-hidden="true">*</span></label>
                   <div className="input-with-prefix"><span aria-hidden="true">R$</span>
-                    <input id="price" name="preco" type="text" inputMode="decimal" min="0.01" max="999.99" step="0.01" required
-                      value={form.preco} placeholder="Ex.: 54,87" aria-invalid={Boolean(errors.preco)}
+                    <NumericInput id="price" name="preco" decimalPlaces={2} required
+                      value={form.preco} aria-invalid={Boolean(errors.preco)}
                       aria-describedby={errors.preco ? 'price-error' : 'price-hint'}
-                      onChange={(event) => updateField('preco', event.currentTarget.value)} />
+                      onValueChange={(value) => updateField('preco', value)} />
                   </div>
                   {errors.preco
                     ? <p className="field-error" id="price-error">{errors.preco}</p>
-                    : <p className="field-hint" id="price-hint">Preço de uma ação (não o total). Ex.: R$ 54,87. Use até 2 casas decimais; não use ponto para milhar.</p>}
+                    : <p className="field-hint" id="price-hint">De R$ 0,01 a R$ 999,99 por ação. Digite só os números: 5487 vira 54,87.</p>}
                 </div>
               </div>
 

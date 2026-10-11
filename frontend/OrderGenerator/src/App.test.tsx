@@ -26,21 +26,20 @@ describe('OrderGenerator form', () => {
     expect(within(screen.getByRole('combobox', { name: 'Lado' })).getAllByRole('option').map((option) => option.textContent))
       .toEqual(['Compra', 'Venda'])
 
-    const quantity = screen.getByRole('spinbutton', { name: 'Quantidade' })
+    const quantity = screen.getByRole('textbox', { name: 'Quantidade' })
     expect(quantity).toBeRequired()
-    expect(quantity).toHaveAttribute('min', '1')
-    expect(quantity).toHaveAttribute('max', '99999')
-    expect(quantity).toHaveAttribute('step', '1')
+    expect(quantity).toHaveAttribute('inputmode', 'numeric')
+    expect(quantity).toHaveValue('')
+    expect(quantity).toHaveAccessibleDescription('De 1 a 99.999 ações')
 
     const price = screen.getByRole('textbox', { name: 'Preço por ação' })
     expect(price).toBeRequired()
-    expect(price).toHaveAttribute('inputmode', 'decimal')
-    expect(price).toHaveAttribute('min', '0.01')
-    expect(price).toHaveAttribute('max', '999.99')
-    expect(price).toHaveAttribute('step', '0.01')
+    expect(price).toHaveAttribute('inputmode', 'numeric')
+    expect(price).toHaveValue('0,00')
+    expect(price).toHaveAccessibleDescription(/De R\$ 0,01 a R\$ 999,99/)
   })
 
-  it('shows errors next to blank fields without converting them to zero or posting', async () => {
+  it('shows errors for missing quantity and zero price without posting', async () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
     const user = userEvent.setup()
@@ -49,8 +48,8 @@ describe('OrderGenerator form', () => {
     await user.click(screen.getByRole('button', { name: 'Enviar ordem' }))
 
     expect(await screen.findByText('Informe a quantidade.')).toBeInTheDocument()
-    expect(screen.getByText('Informe o preço por ação.')).toBeInTheDocument()
-    expect(screen.getByRole('spinbutton', { name: 'Quantidade' })).toHaveValue(null)
+    expect(screen.getByText(/de R\$ 0,01 a R\$ 999,99/)).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'Quantidade' })).toHaveValue('')
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
@@ -61,7 +60,7 @@ describe('OrderGenerator form', () => {
       screen.getByRole('link', { name: 'Home Broker, início' }),
       screen.getByRole('combobox', { name: 'Ativo' }),
       screen.getByRole('combobox', { name: 'Lado' }),
-      screen.getByRole('spinbutton', { name: 'Quantidade' }),
+      screen.getByRole('textbox', { name: 'Quantidade' }),
       screen.getByRole('textbox', { name: 'Preço por ação' }),
       screen.getByRole('button', { name: 'Enviar ordem' }),
     ]
@@ -73,10 +72,11 @@ describe('OrderGenerator form', () => {
 
     await user.keyboard('{Enter}')
     expect(await screen.findByText('Informe a quantidade.')).toBeInTheDocument()
-    expect(screen.getByText('Informe o preço por ação.')).toBeInTheDocument()
+    expect(screen.getByText(/de R\$ 0,01 a R\$ 999,99/)).toBeInTheDocument()
   })
 
   it.each([
+    ['Compra', 'C', '5487', 32_044.08],
     ['Compra', 'C', '54.87', 32_044.08],
     ['Compra', 'C', '54,87', 32_044.08],
     ['Venda', 'V', '54.87', -32_044.08],
@@ -89,7 +89,7 @@ describe('OrderGenerator form', () => {
 
     await user.selectOptions(screen.getByRole('combobox', { name: 'Ativo' }), 'VALE3')
     await user.selectOptions(screen.getByRole('combobox', { name: 'Lado' }), side)
-    await user.type(screen.getByRole('spinbutton', { name: 'Quantidade' }), '584')
+    await user.type(screen.getByRole('textbox', { name: 'Quantidade' }), '584')
     await user.type(screen.getByRole('textbox', { name: 'Preço por ação' }), price)
     await user.click(screen.getByRole('button', { name: 'Enviar ordem' }))
 
@@ -107,44 +107,168 @@ describe('OrderGenerator form', () => {
     expect(screen.getByText('HTTP 200')).toBeInTheDocument()
   })
 
-  it.each([
-    ['fração de centavo', '10,001'],
-    ['separadores misturados', '1.234,56'],
-    ['abaixo do mínimo', '0'],
-    ['acima do máximo', '1000'],
-    ['campo vazio', ''],
-  ])('blocks a price with %s and does not round or post it', async (_reason, price) => {
+  it('formats thousands while typing and stops at five quantity digits', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+    const quantity = screen.getByRole('textbox', { name: 'Quantidade' })
+
+    await user.type(quantity, '1000')
+    expect(quantity).toHaveValue('1.000')
+    await user.clear(quantity)
+    await user.type(quantity, '99999')
+    expect(quantity).toHaveValue('99.999')
+    await user.type(quantity, '123456789')
+    expect(quantity).toHaveValue('99.999')
+  })
+
+  it('fills price from cents and stops at R$ 999,99', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+    const price = screen.getByRole('textbox', { name: 'Preço por ação' })
+
+    expect(price).toHaveValue('0,00')
+    await user.type(price, '1')
+    expect(price).toHaveValue('0,01')
+    await user.type(price, '2')
+    expect(price).toHaveValue('0,12')
+    await user.type(price, '3')
+    expect(price).toHaveValue('1,23')
+    await user.clear(price)
+    expect(price).toHaveValue('0,00')
+    await user.type(price, '99999')
+    expect(price).toHaveValue('999,99')
+    await user.type(price, '123456789')
+    expect(price).toHaveValue('999,99')
+  })
+
+  it('shifts cents back when deleting and supports replacing the selected price', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+    const price = screen.getByRole('textbox', { name: 'Preço por ação' })
+
+    await user.type(price, '5487')
+    expect(price).toHaveValue('54,87')
+    await user.keyboard('{Backspace}')
+    expect(price).toHaveValue('5,48')
+    await user.keyboard('{Backspace}{Backspace}{Backspace}{Backspace}')
+    expect(price).toHaveValue('0,00')
+    await user.type(price, '12345')
+    await user.keyboard('{Control>}a{/Control}99')
+    expect(price).toHaveValue('0,99')
+  })
+
+  it('keeps the quantity caret beside the edited digits as separators change', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+    const quantity = screen.getByRole('textbox', { name: 'Quantidade' }) as HTMLInputElement
+
+    await user.type(quantity, '1234')
+    expect(quantity).toHaveValue('1.234')
+    quantity.setSelectionRange(3, 3)
+    await user.keyboard('5')
+    expect(quantity).toHaveValue('12.534')
+    expect(quantity.selectionStart).toBe(4)
+    await user.keyboard('{Backspace}')
+    expect(quantity).toHaveValue('1.234')
+    expect(quantity.selectionStart).toBe(3)
+    await user.keyboard('{End}{Backspace}')
+    expect(quantity).toHaveValue('123')
+  })
+
+  it('accepts pasted formatted amounts and rejects overflowing pastes without truncation', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+    const quantity = screen.getByRole('textbox', { name: 'Quantidade' })
+    const price = screen.getByRole('textbox', { name: 'Preço por ação' })
+
+    await user.click(quantity)
+    await user.paste('99.999')
+    expect(quantity).toHaveValue('99.999')
+    await user.keyboard('{Control>}a{/Control}')
+    await user.paste('100000')
+    expect(quantity).toHaveValue('99.999')
+    await user.click(price)
+    await user.keyboard('{Control>}a{/Control}')
+    await user.paste('999,99')
+    expect(price).toHaveValue('999,99')
+    await user.keyboard('{Control>}a{/Control}')
+    await user.paste('1000,00')
+    expect(price).toHaveValue('999,99')
+  })
+
+  it('rejects letters and signs instead of sending a different numeric value', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+    const quantity = screen.getByRole('textbox', { name: 'Quantidade' })
+    const price = screen.getByRole('textbox', { name: 'Preço por ação' })
+
+    await user.type(quantity, '-e+')
+    expect(quantity).toHaveValue('')
+    await user.paste('1e3')
+    expect(quantity).toHaveValue('')
+    await user.click(price)
+    await user.paste('-54,87')
+    expect(price).toHaveValue('0,00')
+  })
+
+  it('preserves decimal amounts when pasting and rejects malformed separators', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+    const quantity = screen.getByRole('textbox', { name: 'Quantidade' })
+    const price = screen.getByRole('textbox', { name: 'Preço por ação' })
+
+    await user.type(quantity, '1')
+    await user.paste('1.5')
+    expect(quantity).toHaveValue('1')
+    await user.click(price)
+    await user.paste('54,8')
+    expect(price).toHaveValue('54,80')
+    await user.paste('R$ 54,87')
+    expect(price).toHaveValue('54,87')
+    for (const invalid of ['10,001', '1.234,56', '1,234.56']) {
+      await user.paste(invalid)
+      expect(price).toHaveValue('54,87')
+    }
+  })
+
+  it('keeps price entry at the cents end after moving the caret', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+    const price = screen.getByRole('textbox', { name: 'Preço por ação' })
+
+    await user.type(price, '12')
+    await user.keyboard('{Home}3')
+    expect(price).toHaveValue('1,23')
+    await user.keyboard('{ArrowLeft}{Backspace}')
+    expect(price).toHaveValue('0,12')
+  })
+
+  it('blocks zero quantities and prices', async () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
     const user = userEvent.setup()
     render(<App />)
 
-    await user.type(screen.getByRole('spinbutton', { name: 'Quantidade' }), '1')
-    if (price) await user.type(screen.getByRole('textbox', { name: 'Preço por ação' }), price)
+    await user.type(screen.getByRole('textbox', { name: 'Quantidade' }), '0')
     await user.click(screen.getByRole('button', { name: 'Enviar ordem' }))
-
-    expect(await screen.findByText(price ? /sem arredondar/ : 'Informe o preço por ação.')).toBeInTheDocument()
+    expect(await screen.findByText(/entre 1 e 99\.999/)).toBeInTheDocument()
+    expect(screen.getByText(/de R\$ 0,01 a R\$ 999,99/)).toBeInTheDocument()
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  it('blocks fractional and out-of-range quantities', async () => {
-    const fetchMock = vi.fn()
+  it('sends formatted thousands and the maximum price as numeric API values', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(successfulResponse(999_990))
     vi.stubGlobal('fetch', fetchMock)
     const user = userEvent.setup()
     render(<App />)
-    const quantity = screen.getByRole('spinbutton', { name: 'Quantidade' })
 
-    await user.type(quantity, '1.5')
-    await user.type(screen.getByRole('textbox', { name: 'Preço por ação' }), '1,00')
+    await user.type(screen.getByRole('textbox', { name: 'Quantidade' }), '1000')
+    await user.type(screen.getByRole('textbox', { name: 'Preço por ação' }), '99999')
     await user.click(screen.getByRole('button', { name: 'Enviar ordem' }))
-    expect(await screen.findByText(/número inteiro/)).toBeInTheDocument()
-    expect(fetchMock).not.toHaveBeenCalled()
 
-    await user.clear(quantity)
-    await user.type(quantity, '100000')
-    await user.click(screen.getByRole('button', { name: 'Enviar ordem' }))
-    expect(await screen.findByText(/entre 1 e 99\.999/)).toBeInTheDocument()
-    expect(fetchMock).not.toHaveBeenCalled()
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+    const request = fetchMock.mock.calls[0][1] as RequestInit
+    expect(JSON.parse(String(request.body))).toEqual({ ativo: 'PETR4', lado: 'C', quantidade: 1000, preco: 999.99 })
   })
 
   it.each([
@@ -159,7 +283,7 @@ describe('OrderGenerator form', () => {
     const user = userEvent.setup()
     render(<App />)
 
-    await user.type(screen.getByRole('spinbutton', { name: 'Quantidade' }), '1')
+    await user.type(screen.getByRole('textbox', { name: 'Quantidade' }), '1')
     await user.type(screen.getByRole('textbox', { name: 'Preço por ação' }), '10,00')
     await user.click(screen.getByRole('button', { name: 'Enviar ordem' }))
 
@@ -180,7 +304,7 @@ describe('OrderGenerator form', () => {
     const user = userEvent.setup()
     render(<App />)
 
-    await user.type(screen.getByRole('spinbutton', { name: 'Quantidade' }), '2')
+    await user.type(screen.getByRole('textbox', { name: 'Quantidade' }), '2')
     await user.type(screen.getByRole('textbox', { name: 'Preço por ação' }), '54,87')
     await user.click(screen.getByRole('button', { name: 'Enviar ordem' }))
 
@@ -201,7 +325,7 @@ describe('OrderGenerator form', () => {
     const user = userEvent.setup()
     render(<App />)
 
-    await user.type(screen.getByRole('spinbutton', { name: 'Quantidade' }), '2')
+    await user.type(screen.getByRole('textbox', { name: 'Quantidade' }), '2')
     await user.type(screen.getByRole('textbox', { name: 'Preço por ação' }), '54,87')
     await user.click(screen.getByRole('button', { name: 'Enviar ordem' }))
 
@@ -227,7 +351,7 @@ describe('OrderGenerator form', () => {
     const user = userEvent.setup()
     render(<App />)
 
-    await user.type(screen.getByRole('spinbutton', { name: 'Quantidade' }), '2')
+    await user.type(screen.getByRole('textbox', { name: 'Quantidade' }), '2')
     await user.type(screen.getByRole('textbox', { name: 'Preço por ação' }), '54,87')
     await user.click(screen.getByRole('button', { name: 'Enviar ordem' }))
 
@@ -252,7 +376,7 @@ describe('OrderGenerator form', () => {
     const user = userEvent.setup()
     render(<App />)
 
-    await user.type(screen.getByRole('spinbutton', { name: 'Quantidade' }), '1')
+    await user.type(screen.getByRole('textbox', { name: 'Quantidade' }), '1')
     await user.type(screen.getByRole('textbox', { name: 'Preço por ação' }), '1,00')
     await user.click(screen.getByRole('button', { name: 'Enviar ordem' }))
 
