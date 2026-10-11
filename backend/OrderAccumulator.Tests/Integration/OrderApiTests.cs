@@ -146,6 +146,12 @@ public class OrderApiTests
     [InlineData("10.000")]
     [InlineData("999.99")]
     [InlineData("1e-2")]
+    [InlineData("1E+1")]
+    [InlineData("100e-4")]
+    [InlineData("0.0001e2")]
+    [InlineData("10.000000000000000000000000000000")]
+    [InlineData("1.000000000000000000000000000000e-2")]
+    [InlineData("10000000000000000000000000000000e-30")]
     public async Task AcceptsPricesByNumericValueInsteadOfWrittenDecimalPlaces(string price)
     {
         await using var factory = new OrderApiFactory();
@@ -155,6 +161,28 @@ public class OrderApiTests
 
         await AssertResponse(response, HttpStatusCode.OK, true,
             decimal.Parse(price, NumberStyles.Float, CultureInfo.InvariantCulture));
+    }
+
+    [Theory]
+    [InlineData("10.000000000000000000000000000001")]
+    [InlineData("0.0099999999999999999999999999999")]
+    [InlineData("999.99000000000000000000000000001")]
+    [InlineData("1.000000000000000000000000000001e-2")]
+    [InlineData("10000000000000000000000000000001e-30")]
+    public async Task RejectsPricesThatWouldRoundToWholeCentsWithoutChangingAnyAsset(string price)
+    {
+        await using var factory = new OrderApiFactory();
+        using var client = factory.CreateClient();
+        await SeedExposure(client);
+
+        using var response = await PostJson(client,
+            $$"""{"ativo":"PETR4","lado":"C","quantidade":1,"preco":{{price}}}""");
+
+        await AssertResponse(response, HttpStatusCode.BadRequest, false, 54.87m);
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("Preço deve ser um múltiplo de 0,01 entre 0,01 e 999,99.",
+            document.RootElement.GetProperty("msg_erro").GetString());
+        await AssertExposureWasPreserved(client);
     }
 
     public static TheoryData<string> InvalidFields => new()

@@ -78,6 +78,13 @@ public static class OrderEndpoints
                     "Tipos inválidos: ativo e lado devem ser textos, quantidade um inteiro e preco um número decimal."));
             }
 
+            if (root.TryGetProperty("preco", out var price) && price.ValueKind == JsonValueKind.Number
+                && !JsonPriceValidator.IsWholeCent(price))
+            {
+                return Results.BadRequest(service.RejectInvalidRequest(order?.Ativo,
+                    "Preço deve ser um múltiplo de 0,01 entre 0,01 e 999,99."));
+            }
+
             var response = service.Process(order);
             if (response.Sucesso)
             {
