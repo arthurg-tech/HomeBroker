@@ -1,4 +1,4 @@
-namespace OrderAccumulator.Services;
+namespace OrderAccumulator.Application.Orders;
 
 public enum OrderProcessingStatus
 {

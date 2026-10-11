@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.Extensions.Options;
 using Microsoft.OpenApi;
+using OrderAccumulator.Application.Orders;
 using OrderAccumulator.Contracts;
 using OrderAccumulator.Services;
 using OrderAccumulator.Validation;
