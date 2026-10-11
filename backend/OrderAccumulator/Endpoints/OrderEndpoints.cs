@@ -15,6 +15,8 @@ public static class OrderEndpoints
         .MapPost("/api/ordens", ProcessAsync)
         .WithName("ProcessOrder")
         .WithSummary("Processa uma ordem e retorna a exposição financeira do ativo.")
+        .WithDescription($"O corpo JSON deve ter no máximo {OrderRequestBodyReader.MaxBodySizeBytes} bytes UTF-8. "
+            + "Corpos maiores recebem HTTP 400, com exposicao_atual igual a zero por convenção, sem aplicar a ordem.")
         .AddOpenApiOperationTransformer(async (operation, context, cancellationToken) =>
         {
             var schema = await context.GetOrCreateSchemaAsync(typeof(OrderRequest),
@@ -45,15 +47,21 @@ public static class OrderEndpoints
                 "Content-Type deve ser application/json.");
         }
 
-        JsonDocument document;
+        JsonDocument? document;
         try
         {
-            document = await JsonDocument.ParseAsync(request.Body, cancellationToken: cancellationToken);
+            document = await OrderRequestBodyReader.ReadAsync(request, cancellationToken);
         }
         catch (JsonException)
         {
             return RejectInvalidRequest(service, null,
                 "O corpo deve conter um JSON válido.");
+        }
+
+        if (document is null)
+        {
+            return RejectInvalidRequest(service, null,
+                "O corpo da ordem excede o tamanho permitido");
         }
 
         using (document)
