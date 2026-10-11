@@ -136,7 +136,21 @@ Resposta a partir de exposição zero:
 | 400 | Entrada inválida; `sucesso: false`, mensagem explicativa. | Preservada. |
 | 422 | Limite excedido; `sucesso: false`, mensagem explicativa. | Preservada. |
 
-As respostas previstas sempre contêm `sucesso`, `exposicao_atual` e `msg_erro`. Em uma entrada inválida com JSON válido e ativo permitido identificável, a API retorna a exposição atual dele. JSON malformado e ativo ausente ou inválido usam exposição zero como convenção de erro, sem consultar um saldo válido. Mensagens de erro não expõem detalhes internos ou stack traces.
+As respostas previstas sempre contêm `sucesso`, `exposicao_atual` e `msg_erro`. Em uma entrada inválida com JSON válido dentro do limite de tamanho e ativo permitido identificável, a API retorna a exposição atual dele. JSON malformado, corpo acima do limite e ativo ausente ou inválido usam exposição zero como convenção de erro, sem consultar um saldo válido. Mensagens de erro não expõem detalhes internos ou stack traces.
+
+O corpo de `POST /api/ordens` aceita até **1.000 bytes UTF-8**, incluindo espaços e campos adicionais. O limite é inclusivo e aplicado com ou sem `Content-Length`, inclusive em envios chunked. Há margem para os quatro campos da ordem sem permitir que documentos grandes sejam carregados integralmente pelo parser.
+
+Um `Content-Length` acima do limite permite rejeição antecipada; nos demais casos, a aplicação lê no máximo 1.001 bytes para detectar o excesso antes de criar o documento JSON. Um corpo maior retorna **HTTP 400** para preservar os status do contrato atual, com o seguinte JSON, sem processar a ordem ou alterar a exposição de qualquer ativo:
+
+```json
+{
+  "sucesso": false,
+  "exposicao_atual": 0,
+  "msg_erro": "O corpo da ordem excede o tamanho permitido"
+}
+```
+
+Esse zero é uma convenção de erro: o corpo rejeitado não foi desserializado e não identifica uma exposição consultada. Limites do servidor ou proxy continuam independentes dessa proteção aplicada pelo endpoint.
 
 Quantidade e preço devem ser números JSON; strings numéricas, booleanos, null e campos obrigatórios ausentes são rejeitados. No JSON, preços `10` e `10.000` representam o mesmo valor e são aceitos; `10.001` é rejeitado. A interface aplica sua regra textual de até duas casas e formata valores monetários em reais com duas casas.
 

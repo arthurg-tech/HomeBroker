@@ -308,6 +308,66 @@ public class OrderApiTests
     }
 
     [Theory]
+    [InlineData(999, true)]
+    [InlineData(999, false)]
+    [InlineData(1_000, true)]
+    [InlineData(1_000, false)]
+    [InlineData(1_001, true)]
+    [InlineData(1_001, false)]
+    [InlineData(1_048_576, true)]
+    [InlineData(1_048_576, false)]
+    public async Task EnforcesPayloadByteLimitWithAndWithoutContentLength(int size, bool declaresLength)
+    {
+        await using var factory = new OrderApiFactory();
+        using var client = factory.CreateClient();
+        await SeedExposure(client);
+        const string orderJson = """{"ativo":"PETR4","lado":"C","quantidade":1,"preco":1}""";
+        var body = Encoding.UTF8.GetBytes(orderJson.PadRight(size));
+        Assert.Equal(size, body.Length);
+        using var request = JsonBodyRequest(body, declaresLength);
+
+        using var response = await client.SendAsync(request);
+
+        if (size <= 1_000)
+        {
+            await AssertResponse(response, HttpStatusCode.OK, true, 55.87m);
+            await AssertExposureWasPreserved(client, 55.87m);
+        }
+        else
+        {
+            await AssertResponse(response, HttpStatusCode.BadRequest, false, 0m);
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            Assert.Equal("O corpo da ordem excede o tamanho permitido",
+                document.RootElement.GetProperty("msg_erro").GetString());
+            await AssertExposureWasPreserved(client);
+        }
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task PayloadLimitCountsUtf8BytesInsteadOfCharacters(bool declaresLength)
+    {
+        await using var factory = new OrderApiFactory();
+        using var client = factory.CreateClient();
+        await SeedExposure(client);
+        var padding = new string('é', 500);
+        var json = $$"""{"ativo":"PETR4","lado":"C","quantidade":1,"preco":1,"extra":"{{padding}}"}""";
+        var body = Encoding.UTF8.GetBytes(json);
+        Assert.True(json.Length < 1_000);
+        Assert.True(body.Length > 1_000);
+        using var request = JsonBodyRequest(body, declaresLength);
+
+        using var response = await client.SendAsync(request);
+
+        await AssertResponse(response, HttpStatusCode.BadRequest, false, 0m);
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("O corpo da ordem excede o tamanho permitido",
+            document.RootElement.GetProperty("msg_erro").GetString());
+        await AssertExposureWasPreserved(client);
+    }
+
+    [Theory]
     [InlineData("http://localhost:5173", true)]
     [InlineData("http://localhost:5174", false)]
     [InlineData("https://example.com", false)]
@@ -346,6 +406,7 @@ public class OrderApiTests
         var post = paths.GetProperty("/api/ordens").GetProperty("post");
 
         Assert.Equal("ProcessOrder", post.GetProperty("operationId").GetString());
+        Assert.Contains("1000 bytes UTF-8", post.GetProperty("description").GetString());
         Assert.True(post.GetProperty("requestBody").GetProperty("content").TryGetProperty("application/json", out _));
         foreach (var status in new[] { "200", "400", "422" })
         {
@@ -356,6 +417,21 @@ public class OrderApiTests
         Assert.False(paths.TryGetProperty("/weatherforecast", out _));
         using var removed = await client.GetAsync("/weatherforecast");
         Assert.Equal(HttpStatusCode.NotFound, removed.StatusCode);
+    }
+
+    private static HttpRequestMessage JsonBodyRequest(byte[] body, bool declaresLength)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, "/api/ordens")
+        {
+            Content = new JsonBodyContent(body, declaresLength),
+        };
+        if (!declaresLength)
+        {
+            request.Headers.TransferEncodingChunked = true;
+        }
+
+        Assert.Equal(declaresLength ? (long?)body.Length : null, request.Content.Headers.ContentLength);
+        return request;
     }
 
     private static async Task<HttpResponseMessage> PostJson(HttpClient client, string json)
@@ -413,6 +489,33 @@ public class OrderApiTests
             Assert.False(string.IsNullOrWhiteSpace(message));
             Assert.DoesNotContain("Exception", body, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("StackTrace", body, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    private sealed class JsonBodyContent : HttpContent
+    {
+        private readonly byte[] _body;
+        private readonly bool _declaresLength;
+
+        public JsonBodyContent(byte[] body, bool declaresLength)
+        {
+            _body = body;
+            _declaresLength = declaresLength;
+            Headers.ContentType = new("application/json");
+        }
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = _declaresLength ? _body.Length : 0;
+            return _declaresLength;
+        }
+
+        protected override async Task SerializeToStreamAsync(Stream stream, TransportContext? context)
+        {
+            for (var offset = 0; offset < _body.Length; offset += 256)
+            {
+                await stream.WriteAsync(_body.AsMemory(offset, Math.Min(256, _body.Length - offset)));
+            }
         }
     }
 
