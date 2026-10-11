@@ -77,16 +77,18 @@ describe('OrderGenerator form', () => {
   })
 
   it.each([
-    ['ponto', '54.87'],
-    ['vírgula', '54,87'],
-  ])('accepts %s as the decimal separator and maps the visible side to the API code', async (_separator, price) => {
-    const fetchMock = vi.fn().mockResolvedValue(successfulResponse(-32_044.08))
+    ['Compra', 'C', '54.87', 32_044.08],
+    ['Compra', 'C', '54,87', 32_044.08],
+    ['Venda', 'V', '54.87', -32_044.08],
+    ['Venda', 'V', '54,87', -32_044.08],
+  ])('sends %s (%s) with numeric fields from price %s', async (side, code, price, exposure) => {
+    const fetchMock = vi.fn().mockResolvedValue(successfulResponse(exposure))
     vi.stubGlobal('fetch', fetchMock)
     const user = userEvent.setup()
     render(<App />)
 
     await user.selectOptions(screen.getByRole('combobox', { name: 'Ativo' }), 'VALE3')
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Lado' }), 'Venda')
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Lado' }), side)
     await user.type(screen.getByRole('spinbutton', { name: 'Quantidade' }), '584')
     await user.type(screen.getByRole('textbox', { name: 'Preço por ação' }), price)
     await user.click(screen.getByRole('button', { name: 'Enviar ordem' }))
@@ -97,10 +99,12 @@ describe('OrderGenerator form', () => {
     expect(request.method).toBe('POST')
     expect(request.headers).toEqual({ 'Content-Type': 'application/json' })
     const payload = JSON.parse(String(request.body)) as Record<string, unknown>
-    expect(payload).toEqual({ ativo: 'VALE3', lado: 'V', quantidade: 584, preco: 54.87 })
+    expect(payload).toEqual({ ativo: 'VALE3', lado: code, quantidade: 584, preco: 54.87 })
+    expect(typeof payload.quantidade).toBe('number')
     expect(typeof payload.preco).toBe('number')
     expect(await screen.findByText('Resposta da API')).toBeInTheDocument()
     expect(screen.getByText(/32\.044,08/)).toBeInTheDocument()
+    expect(screen.getByText('HTTP 200')).toBeInTheDocument()
   })
 
   it.each([
@@ -143,10 +147,13 @@ describe('OrderGenerator form', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  it('presents a backend limit rejection and the response JSON', async () => {
-    const rejected = { sucesso: false, exposicao_atual: 990_000, msg_erro: 'Limite de exposição excedido.' }
+  it.each([
+    [400, 54.87, 'Quantidade deve ser um inteiro entre 1 e 99.999.'],
+    [422, 990_000, 'Limite de exposição excedido.'],
+  ])('presents HTTP %s, the error message and the response JSON', async (status, exposure, message) => {
+    const rejected = { sucesso: false, exposicao_atual: exposure, msg_erro: message }
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(rejected), {
-      status: 422,
+      status,
       headers: { 'Content-Type': 'application/json' },
     })))
     const user = userEvent.setup()
@@ -156,11 +163,12 @@ describe('OrderGenerator form', () => {
     await user.type(screen.getByRole('textbox', { name: 'Preço por ação' }), '10,00')
     await user.click(screen.getByRole('button', { name: 'Enviar ordem' }))
 
-    expect(await screen.findByText('HTTP 422')).toBeInTheDocument()
-    expect(screen.getByText('Limite de exposição excedido.')).toBeInTheDocument()
+    expect(await screen.findByText(`HTTP ${status}`)).toBeInTheDocument()
+    expect(screen.getByText(message)).toBeInTheDocument()
     await user.click(screen.getByText('Ver resposta JSON'))
     expect(screen.getByText((_content, element) => element?.tagName === 'PRE'))
-      .toHaveTextContent('"exposicao_atual": 990000')
+      .toHaveTextContent(`"exposicao_atual": ${exposure}`)
+    expect(screen.getByRole('button', { name: 'Enviar ordem' })).toBeEnabled()
   })
 
   it('shows the pending state and disables submission until the API responds', async () => {
@@ -178,6 +186,7 @@ describe('OrderGenerator form', () => {
 
     const pendingButton = await screen.findByRole('button', { name: 'Enviando…' })
     expect(pendingButton).toBeDisabled()
+    await user.click(pendingButton)
     expect(fetchMock).toHaveBeenCalledTimes(1)
 
     resolveResponse(successfulResponse(109.74))
@@ -201,6 +210,7 @@ describe('OrderGenerator form', () => {
     expect(screen.queryByText('Resposta da API')).not.toBeInTheDocument()
     expect(screen.queryByText('Exposição atual')).not.toBeInTheDocument()
     expect(screen.queryByText(/rejeitada pelo servidor/i)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Enviar ordem' })).toBeEnabled()
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
@@ -226,5 +236,30 @@ describe('OrderGenerator form', () => {
     expect(screen.queryByText('Resposta da API')).not.toBeInTheDocument()
     expect(screen.queryByText('Exposição atual')).not.toBeInTheDocument()
     expect(screen.queryByText('Falha interna.')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Enviar ordem' })).toBeEnabled()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    ['JSON malformado', '{'],
+    ['contrato inválido', JSON.stringify({ sucesso: true, exposicao_atual: '100', msg_erro: '' })],
+  ])('releases submission after %s without retrying automatically', async (_reason, body) => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(body, {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.type(screen.getByRole('spinbutton', { name: 'Quantidade' }), '1')
+    await user.type(screen.getByRole('textbox', { name: 'Preço por ação' }), '1,00')
+    await user.click(screen.getByRole('button', { name: 'Enviar ordem' }))
+
+    expect(await screen.findByRole('heading', { name: 'Falha de comunicação' })).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent('Não foi possível confirmar a resposta')
+    expect(screen.queryByText('Exposição atual')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Enviar ordem' })).toBeEnabled()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 })

@@ -11,14 +11,16 @@ public class OrderRequestValidatorTests
     [InlineData(99_999)]
     public void AcceptsQuantityAtInclusiveBoundaries(int quantity)
     {
-        var errors = OrderRequestValidator.Validate(ValidOrder() with { Quantidade = quantity });
+        var errors = OrderRequestValidator.Validate(ValidOrder() with { Quantidade = quantity, Preco = 0.01m });
 
-        Assert.DoesNotContain(errors, error => error.StartsWith("Quantidade", StringComparison.Ordinal));
+        Assert.Empty(errors);
     }
 
     [Theory]
     [InlineData(0)]
+    [InlineData(-1)]
     [InlineData(100_000)]
+    [InlineData(int.MaxValue)]
     public void RejectsQuantityOutsideRange(int quantity)
     {
         var errors = OrderRequestValidator.Validate(ValidOrder() with { Quantidade = quantity });
@@ -32,9 +34,9 @@ public class OrderRequestValidatorTests
     [InlineData(999.99)]
     public void AcceptsPriceAtBoundariesAndWholeCentMultiples(decimal price)
     {
-        var errors = OrderRequestValidator.Validate(ValidOrder() with { Preco = price });
+        var errors = OrderRequestValidator.Validate(ValidOrder() with { Quantidade = 1, Preco = price });
 
-        Assert.DoesNotContain(errors, error => error.StartsWith("Preço", StringComparison.Ordinal));
+        Assert.Empty(errors);
     }
 
     [Theory]

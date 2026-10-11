@@ -22,8 +22,98 @@ public class OrderApiTests
         await AssertResponse(purchase, HttpStatusCode.OK, true, 32_044.08m);
 
         using var sale = await seller.PostAsJsonAsync("/api/ordens",
-            new { ativo = "PETR4", lado = "V", quantidade = 1, preco = 0.08m });
-        await AssertResponse(sale, HttpStatusCode.OK, true, 32_044m);
+            new { ativo = "PETR4", lado = "V", quantidade = 100, preco = 50m });
+        await AssertResponse(sale, HttpStatusCode.OK, true, 27_044.08m);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(99_999)]
+    public async Task AcceptsQuantityBoundariesWithTheMinimumPrice(int quantity)
+    {
+        await using var factory = new OrderApiFactory();
+        using var client = factory.CreateClient();
+
+        using var response = await client.PostAsJsonAsync("/api/ordens",
+            new { ativo = "PETR4", lado = "C", quantidade = quantity, preco = 0.01m });
+
+        await AssertResponse(response, HttpStatusCode.OK, true, quantity * 0.01m);
+    }
+
+    [Fact]
+    public async Task ValidMaximumFieldsAreRejectedByTheLimitWithoutChangingAnyAsset()
+    {
+        await using var factory = new OrderApiFactory();
+        using var client = factory.CreateClient();
+
+        using var rejected = await client.PostAsJsonAsync("/api/ordens",
+            new { ativo = "PETR4", lado = "C", quantidade = 99_999, preco = 999.99m });
+        await AssertResponse(rejected, HttpStatusCode.UnprocessableEntity, false, 0m);
+
+        foreach (var asset in new[] { "PETR4", "VALE3", "VIIA4" })
+        {
+            using var probe = await client.PostAsJsonAsync("/api/ordens",
+                new { ativo = asset, lado = "C", quantidade = 1, preco = 0.01m });
+            await AssertResponse(probe, HttpStatusCode.OK, true, 0.01m);
+        }
+    }
+
+    [Fact]
+    public async Task AcceptedAndRejectedOrdersKeepTheOtherAssetsIndependent()
+    {
+        await using var factory = new OrderApiFactory();
+        using var client = factory.CreateClient();
+        await SeedExposure(client);
+
+        using var purchase = await client.PostAsJsonAsync("/api/ordens",
+            new { ativo = "PETR4", lado = "C", quantidade = 1, preco = 10m });
+        await AssertResponse(purchase, HttpStatusCode.OK, true, 64.87m);
+
+        using var rejected = await client.PostAsJsonAsync("/api/ordens",
+            new { ativo = "PETR4", lado = "C", quantidade = 99_999, preco = 999.99m });
+        await AssertResponse(rejected, HttpStatusCode.UnprocessableEntity, false, 64.87m);
+        await AssertExposureWasPreserved(client, 64.87m);
+    }
+
+    [Theory]
+    [InlineData("C")]
+    [InlineData("V")]
+    public async Task ConcurrentHttpOrdersShareOneExposureAndRespectBothLimits(string side)
+    {
+        await using var factory = new OrderApiFactory();
+        using var firstClient = factory.CreateClient();
+        using var secondClient = factory.CreateClient();
+        var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var expectedLimit = side == "C" ? 1_000_000m : -1_000_000m;
+
+        // Todas as solicitações utilizam o mesmo host; dois clientes também seguem o ciclo de vida Singleton.
+        var tasks = Enumerable.Range(0, 20).Select(async index =>
+        {
+            await start.Task;
+            var client = index % 2 == 0 ? firstClient : secondClient;
+            using var response = await client.PostAsJsonAsync("/api/ordens",
+                new { ativo = "PETR4", lado = side, quantidade = 1_000, preco = 100m });
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var exposure = document.RootElement.GetProperty("exposicao_atual").GetDecimal();
+            var accepted = response.StatusCode == HttpStatusCode.OK;
+            await AssertResponse(response,
+                accepted ? HttpStatusCode.OK : HttpStatusCode.UnprocessableEntity,
+                accepted, accepted ? exposure : expectedLimit);
+            return (Accepted: accepted, Exposure: exposure);
+        }).ToArray();
+
+        start.SetResult();
+        var results = await Task.WhenAll(tasks).WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.Equal(10, results.Count(result => result.Accepted));
+        Assert.Equal(10, results.Count(result => !result.Accepted));
+        Assert.Equal(Enumerable.Range(1, 10).Select(index => index * expectedLimit / 10).Order(),
+            results.Where(result => result.Accepted).Select(result => result.Exposure).Order());
+
+        // Uma nova solicitação observa o estado persistido final, inclusive após cada rejeição.
+        using var reduced = await firstClient.PostAsJsonAsync("/api/ordens",
+            new { ativo = "PETR4", lado = side == "C" ? "V" : "C", quantidade = 1, preco = 0.01m });
+        await AssertResponse(reduced, HttpStatusCode.OK, true,
+            side == "C" ? 999_999.99m : -999_999.99m);
     }
 
     [Theory]
@@ -81,6 +171,7 @@ public class OrderApiTests
         """ "lado":"C","quantidade":null,"preco":1 """,
         """ "lado":"C","quantidade":{},"preco":1 """,
         """ "lado":"C","quantidade":0,"preco":1 """,
+        """ "lado":"C","quantidade":-1,"preco":1 """,
         """ "lado":"C","quantidade":100000,"preco":1 """,
         """ "lado":"C","quantidade":2147483648,"preco":1 """,
         """ "lado":"C","preco":1 """,
@@ -89,6 +180,7 @@ public class OrderApiTests
         """ "lado":"C","quantidade":1,"preco":null """,
         """ "lado":"C","quantidade":1,"preco":[] """,
         """ "lado":"C","quantidade":1,"preco":0 """,
+        """ "lado":"C","quantidade":1,"preco":-0.01 """,
         """ "lado":"C","quantidade":1,"preco":1000 """,
         """ "lado":"C","quantidade":1,"preco":10.001 """,
         """ "lado":"C","quantidade":1,"preco":1e100 """,
@@ -214,13 +306,24 @@ public class OrderApiTests
         using var response = await client.PostAsJsonAsync("/api/ordens",
             new { ativo = "PETR4", lado = "C", quantidade = 1, preco = 54.87m });
         await AssertResponse(response, HttpStatusCode.OK, true, 54.87m);
+
+        using var sale = await client.PostAsJsonAsync("/api/ordens",
+            new { ativo = "VALE3", lado = "V", quantidade = 1, preco = 20m });
+        await AssertResponse(sale, HttpStatusCode.OK, true, -20m);
+
+        using var purchase = await client.PostAsJsonAsync("/api/ordens",
+            new { ativo = "VIIA4", lado = "C", quantidade = 1, preco = 30m });
+        await AssertResponse(purchase, HttpStatusCode.OK, true, 30m);
     }
 
-    private static async Task AssertExposureWasPreserved(HttpClient client)
+    private static async Task AssertExposureWasPreserved(HttpClient client, decimal petrExposure = 54.87m)
     {
-        using var response = await client.PostAsJsonAsync("/api/ordens",
-            new { ativo = "PETR4", lado = "C", quantidade = 1, preco = 0.01m });
-        await AssertResponse(response, HttpStatusCode.OK, true, 54.88m);
+        foreach (var (asset, exposure) in new[] { ("PETR4", petrExposure), ("VALE3", -20m), ("VIIA4", 30m) })
+        {
+            using var response = await client.PostAsJsonAsync("/api/ordens",
+                new { ativo = asset, lado = "C", quantidade = 1, preco = 0.01m });
+            await AssertResponse(response, HttpStatusCode.OK, true, exposure + 0.01m);
+        }
     }
 
     private static async Task AssertResponse(HttpResponseMessage response, HttpStatusCode status,

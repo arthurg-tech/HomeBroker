@@ -1,5 +1,6 @@
 using OrderAccumulator.Contracts;
 using OrderAccumulator.Services;
+using OrderAccumulator.Validation;
 
 namespace OrderAccumulator.Tests.Unit;
 
@@ -30,6 +31,48 @@ public class ExposureServiceTests
         Assert.Equal(expected, response.ExposicaoAtual);
         Assert.Equal(expected, service.GetExposure("PETR4"));
         Assert.Equal("", response.MsgErro);
+    }
+
+    [Fact]
+    public void AccumulatesTheReferencePurchaseAndSaleSequence()
+    {
+        var service = new ExposureService();
+
+        var purchase = service.Process(Order("C", 584, 54.87m));
+        var sale = service.Process(Order("V", 100, 50m));
+
+        Assert.True(purchase.Sucesso);
+        Assert.Equal(32_044.08m, purchase.ExposicaoAtual);
+        Assert.True(sale.Sucesso);
+        Assert.Equal(27_044.08m, sale.ExposicaoAtual);
+        Assert.Equal(27_044.08m, service.GetExposure("PETR4"));
+    }
+
+    [Fact]
+    public void AllowsTheReferenceSaleFromZero()
+    {
+        var service = new ExposureService();
+
+        var response = service.Process(Order("V", 10, 20m));
+
+        Assert.True(response.Sucesso);
+        Assert.Equal(-200m, response.ExposicaoAtual);
+        Assert.Equal(-200m, service.GetExposure("PETR4"));
+    }
+
+    [Fact]
+    public void RejectsValidMaximumFieldsByTheLimitWithoutMutatingState()
+    {
+        var service = new ExposureService();
+        var order = Order("C", 99_999, 999.99m);
+        Assert.Empty(OrderRequestValidator.Validate(order));
+
+        var response = service.Process(order);
+
+        Assert.False(response.Sucesso);
+        Assert.Equal(0m, response.ExposicaoAtual);
+        Assert.Equal("A ordem ultrapassa o limite de exposição do ativo PETR4.", response.MsgErro);
+        Assert.All(new[] { "PETR4", "VALE3", "VIIA4" }, asset => Assert.Equal(0m, service.GetExposure(asset)));
     }
 
     [Fact]
@@ -124,6 +167,12 @@ public class ExposureServiceTests
         Assert.False(rejected.Sucesso);
         Assert.Equal(1_000_000m, rejected.ExposicaoAtual);
         Assert.Equal(1_000_000m, service.GetExposure("PETR4"));
+        Assert.Equal(-1_000_000m, service.GetExposure("VALE3"));
+        Assert.Equal(54.87m, service.GetExposure("VIIA4"));
+
+        var reduced = service.Process(Order("V", 1, 10m, "PETR4"));
+        Assert.True(reduced.Sucesso);
+        Assert.Equal(999_990m, service.GetExposure("PETR4"));
         Assert.Equal(-1_000_000m, service.GetExposure("VALE3"));
         Assert.Equal(54.87m, service.GetExposure("VIIA4"));
     }
