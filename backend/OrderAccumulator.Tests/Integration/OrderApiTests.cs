@@ -5,11 +5,15 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using OrderAccumulator.Contracts;
+using OrderAccumulator.Tests.Support;
 
 namespace OrderAccumulator.Tests.Integration;
 
 public class OrderApiTests
 {
+    private static readonly TimeSpan ConcurrentTestTimeout = TimeSpan.FromSeconds(30);
+
     [Fact]
     public async Task SuccessfulOrdersShareStateAcrossRequestsAndClients()
     {
@@ -83,37 +87,94 @@ public class OrderApiTests
         await using var factory = new OrderApiFactory();
         using var firstClient = factory.CreateClient();
         using var secondClient = factory.CreateClient();
-        var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        firstClient.Timeout = ConcurrentTestTimeout;
+        secondClient.Timeout = ConcurrentTestTimeout;
         var expectedLimit = side == "C" ? 1_000_000m : -1_000_000m;
 
         // Todas as solicitações utilizam o mesmo host; dois clientes também seguem o ciclo de vida Singleton.
-        var tasks = Enumerable.Range(0, 20).Select(async index =>
-        {
-            await start.Task;
-            var client = index % 2 == 0 ? firstClient : secondClient;
-            using var response = await client.PostAsJsonAsync("/api/ordens",
-                new { ativo = "PETR4", lado = side, quantidade = 1_000, preco = 100m });
-            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-            var exposure = document.RootElement.GetProperty("exposicao_atual").GetDecimal();
-            var accepted = response.StatusCode == HttpStatusCode.OK;
-            await AssertResponse(response,
-                accepted ? HttpStatusCode.OK : HttpStatusCode.UnprocessableEntity,
-                accepted, accepted ? exposure : expectedLimit);
-            return (Accepted: accepted, Exposure: exposure);
-        }).ToArray();
-
-        start.SetResult();
-        var results = await Task.WhenAll(tasks).WaitAsync(TimeSpan.FromSeconds(30));
-        Assert.Equal(10, results.Count(result => result.Accepted));
-        Assert.Equal(10, results.Count(result => !result.Accepted));
+        var order = new OrderRequest { Ativo = "PETR4", Lado = side, Quantidade = 1_000, Preco = 100m };
+        var results = await SendConcurrentOrders(firstClient, secondClient, Enumerable.Repeat(order, 20).ToArray());
+        Assert.Equal(10, results.Count(result => result.Status == HttpStatusCode.OK));
+        Assert.Equal(10, results.Count(result => result.Status == HttpStatusCode.UnprocessableEntity));
         Assert.Equal(Enumerable.Range(1, 10).Select(index => index * expectedLimit / 10).Order(),
-            results.Where(result => result.Accepted).Select(result => result.Exposure).Order());
+            results.Where(result => result.Status == HttpStatusCode.OK).Select(result => result.Exposure).Order());
+        Assert.All(results.Where(result => result.Status == HttpStatusCode.UnprocessableEntity), result =>
+        {
+            Assert.Equal(expectedLimit, result.Exposure);
+            Assert.Equal("A ordem ultrapassa o limite de exposição do ativo PETR4.", result.Message);
+        });
 
         // Uma nova solicitação observa o estado persistido final, inclusive após cada rejeição.
         using var reduced = await firstClient.PostAsJsonAsync("/api/ordens",
             new { ativo = "PETR4", lado = side == "C" ? "V" : "C", quantidade = 1, preco = 0.01m });
         await AssertResponse(reduced, HttpStatusCode.OK, true,
             side == "C" ? 999_999.99m : -999_999.99m);
+    }
+
+    [Theory]
+    [InlineData("C", false)]
+    [InlineData("V", false)]
+    [InlineData("C", true)]
+    public async Task ConcurrentMixedHttpOrdersKeepEachExposureEqualToAcceptedOrders(string initialSide,
+        bool multipleAssets)
+    {
+        await using var factory = new OrderApiFactory();
+        using var firstClient = factory.CreateClient();
+        using var secondClient = factory.CreateClient();
+        firstClient.Timeout = ConcurrentTestTimeout;
+        secondClient.Timeout = ConcurrentTestTimeout;
+        var scenario = ConcurrentOrderScenarios.CreateMixed(initialSide, multipleAssets);
+        foreach (var seed in scenario.Seeds)
+        {
+            using var response = await PostOrder(firstClient, seed);
+            await AssertResponse(response, HttpStatusCode.OK, true, scenario.InitialExposures[seed.Ativo!]);
+        }
+
+        var outcomes = await SendConcurrentOrders(firstClient, secondClient, scenario.Orders);
+
+        foreach (var (asset, initialExposure) in scenario.InitialExposures)
+        {
+            var assetOutcomes = outcomes.Where(outcome => outcome.Order.Ativo == asset).ToArray();
+            Assert.All(assetOutcomes, outcome =>
+            {
+                Assert.InRange(outcome.Exposure, -1_000_000m, 1_000_000m);
+                if (outcome.Order.Quantidade == 0)
+                {
+                    Assert.Equal(HttpStatusCode.BadRequest, outcome.Status);
+                    Assert.Equal("Quantidade deve ser um inteiro entre 1 e 99.999.", outcome.Message);
+                }
+                else if (outcome.Status != HttpStatusCode.OK)
+                {
+                    Assert.Equal(HttpStatusCode.UnprocessableEntity, outcome.Status);
+                    Assert.True(Math.Abs(outcome.Exposure + ConcurrentOrderScenarios.SignedAmount(outcome.Order))
+                        > 1_000_000m, "Uma rejeição por limite deve ser justificada pela exposição retornada.");
+                    Assert.Equal($"A ordem ultrapassa o limite de exposição do ativo {asset}.", outcome.Message);
+                }
+            });
+
+            Assert.Equal(2, assetOutcomes.Count(outcome => outcome.Order.Quantidade == 99_999
+                && outcome.Status == HttpStatusCode.UnprocessableEntity));
+            Assert.Single(assetOutcomes, outcome => outcome.Status == HttpStatusCode.BadRequest);
+            var accepted = assetOutcomes.Where(outcome => outcome.Status == HttpStatusCode.OK).ToArray();
+            Assert.Contains(accepted, outcome => outcome.Order.Lado == "C");
+            Assert.Contains(accepted, outcome => outcome.Order.Lado == "V");
+
+            var expectedExposure = initialExposure + accepted.Sum(outcome => ConcurrentOrderScenarios.SignedAmount(outcome.Order));
+            // Uma entrada inválida consulta o estado final sem aplicar uma nova ordem.
+            using var probe = await firstClient.PostAsJsonAsync("/api/ordens",
+                new { ativo = asset, lado = "C", quantidade = 0, preco = 1m });
+            await AssertResponse(probe, HttpStatusCode.BadRequest, false, expectedExposure);
+        }
+
+        if (!multipleAssets)
+        {
+            foreach (var asset in new[] { "VALE3", "VIIA4" })
+            {
+                using var probe = await secondClient.PostAsJsonAsync("/api/ordens",
+                    new { ativo = asset, lado = "C", quantidade = 0, preco = 1m });
+                await AssertResponse(probe, HttpStatusCode.BadRequest, false, 0m);
+            }
+        }
     }
 
     [Theory]
@@ -433,6 +494,50 @@ public class OrderApiTests
         Assert.Equal(declaresLength ? (long?)body.Length : null, request.Content.Headers.ContentLength);
         return request;
     }
+
+    private static async Task<(OrderRequest Order, HttpStatusCode Status, decimal Exposure, string Message)[]>
+        SendConcurrentOrders(HttpClient firstClient, HttpClient secondClient, IReadOnlyList<OrderRequest> orders)
+    {
+        using var cancellation = new CancellationTokenSource(ConcurrentTestTimeout);
+        var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var tasks = orders.Select(async (order, index) =>
+        {
+            await start.Task.WaitAsync(cancellation.Token);
+            var client = index % 2 == 0 ? firstClient : secondClient;
+            using var response = await PostOrder(client, order, cancellation.Token);
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellation.Token));
+            var exposure = document.RootElement.GetProperty("exposicao_atual").GetDecimal();
+            var message = document.RootElement.GetProperty("msg_erro").GetString()!;
+            Assert.Contains(response.StatusCode,
+                new[] { HttpStatusCode.OK, HttpStatusCode.BadRequest, HttpStatusCode.UnprocessableEntity });
+            await AssertResponse(response, response.StatusCode, response.StatusCode == HttpStatusCode.OK, exposure);
+            return (Order: order, Status: response.StatusCode, Exposure: exposure, Message: message);
+        }).ToArray();
+        var completion = Task.WhenAll(tasks);
+
+        try
+        {
+            start.SetResult();
+            return await completion.WaitAsync(ConcurrentTestTimeout, cancellation.Token);
+        }
+        finally
+        {
+            await cancellation.CancelAsync();
+            try
+            {
+                await completion.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            catch (Exception)
+            {
+                // A limpeza é limitada e não deve substituir a falha original do teste.
+            }
+        }
+    }
+
+    private static Task<HttpResponseMessage> PostOrder(HttpClient client, OrderRequest order,
+        CancellationToken cancellationToken = default) => client.PostAsJsonAsync("/api/ordens",
+        new { ativo = order.Ativo, lado = order.Lado, quantidade = order.Quantidade, preco = order.Preco },
+        cancellationToken);
 
     private static async Task<HttpResponseMessage> PostJson(HttpClient client, string json)
     {
