@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react'
-import { sendOrder } from './orderApi'
+import { sendOrder, type OrderApiResult } from './orderApi'
 import { NumericInput } from './NumericInput'
-import { ASSETS, validateOrderForm, type OrderFormValues, type OrderResponse } from './orderValidation'
+import { ASSETS, validateOrderForm, type OrderFormValues } from './orderValidation'
 import './App.css'
 
 const initialForm: OrderFormValues = { ativo: 'PETR4', lado: 'Compra', quantidade: '', preco: '0,00' }
@@ -9,9 +9,10 @@ const initialForm: OrderFormValues = { ativo: 'PETR4', lado: 'Compra', quantidad
 function App() {
   const [form, setForm] = useState(initialForm)
   const [errors, setErrors] = useState<Partial<Record<keyof OrderFormValues, string>>>({})
-  const [result, setResult] = useState<{ status: number; body: OrderResponse } | null>(null)
+  const [result, setResult] = useState<OrderApiResult | null>(null)
   const [requestError, setRequestError] = useState('')
   const [isSending, setIsSending] = useState(false)
+  const isRateLimited = result?.status === 429
 
   function updateField(field: keyof OrderFormValues, value: string) {
     setForm((previous) => ({ ...previous, [field]: value }))
@@ -136,15 +137,26 @@ function App() {
           <section className={`response-card ${result?.body.sucesso ? 'response-success' : 'response-error'}`}
             aria-labelledby="response-title" aria-live="polite">
             <div className="response-heading"><div><p className="card-kicker">RETORNO DO PROCESSAMENTO</p>
-              <h2 id="response-title">{requestError ? 'Falha de comunicação' : 'Resposta da API'}</h2></div>
+              <h2 id="response-title">
+                {requestError ? 'Falha de comunicação' : isRateLimited ? 'Limite de requisições atingido' : 'Resposta da API'}
+              </h2></div>
               {result && <span className="http-status">HTTP {result.status}</span>}
             </div>
             {requestError ? <p className="request-error" role="alert">{requestError}</p> : result && <>
               <p className="result-message" role="status"><span aria-hidden="true">{result.body.sucesso ? '✓' : '!'}</span>
                 {result.body.sucesso ? 'Ordem aceita com sucesso.' : result.body.msg_erro}</p>
-              <div className="response-value"><span>Exposição atual</span>
-                <strong>{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(result.body.exposicao_atual)}</strong>
-              </div>
+              {isRateLimited ? (
+                <p className="rate-limit-note">
+                  A ordem não foi processada. A exposição dos ativos foi preservada.
+                  {result.retryAfterSeconds !== undefined && <>
+                    {' '}Espera estimada pela API: {result.retryAfterSeconds} {result.retryAfterSeconds === 1 ? 'segundo' : 'segundos'}.
+                  </>}
+                </p>
+              ) : (
+                <div className="response-value"><span>Exposição atual</span>
+                  <strong>{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(result.body.exposicao_atual)}</strong>
+                </div>
+              )}
               <details className="json-details"><summary>Ver resposta JSON</summary>
                 <pre>{JSON.stringify(result.body, null, 2)}</pre>
               </details>

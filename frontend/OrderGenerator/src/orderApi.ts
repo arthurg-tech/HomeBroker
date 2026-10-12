@@ -2,7 +2,13 @@ import type { OrderRequest, OrderResponse } from './orderValidation'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5177'
 
-const expectedStatuses = new Set([200, 400, 422])
+const expectedStatuses = new Set([200, 400, 422, 429])
+
+export interface OrderApiResult {
+  status: number
+  body: OrderResponse
+  retryAfterSeconds?: number
+}
 
 function isOrderResponse(value: unknown): value is OrderResponse {
   if (typeof value !== 'object' || value === null) return false
@@ -14,7 +20,7 @@ function isOrderResponse(value: unknown): value is OrderResponse {
     && typeof response.msg_erro === 'string'
 }
 
-export async function sendOrder(order: OrderRequest): Promise<{ status: number; body: OrderResponse }> {
+export async function sendOrder(order: OrderRequest): Promise<OrderApiResult> {
   const response = await fetch(`${API_BASE_URL}/api/ordens`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -37,5 +43,12 @@ export async function sendOrder(order: OrderRequest): Promise<{ status: number; 
     throw new Error('A resposta da API não corresponde ao status HTTP.')
   }
 
-  return { status: response.status, body }
+  const result: OrderApiResult = { status: response.status, body }
+  if (response.status === 429) {
+    const retryAfter = response.headers.get('Retry-After')?.trim()
+    const seconds = retryAfter && /^\d+$/.test(retryAfter) ? Number(retryAfter) : Number.NaN
+    if (Number.isSafeInteger(seconds)) result.retryAfterSeconds = seconds
+  }
+
+  return result
 }

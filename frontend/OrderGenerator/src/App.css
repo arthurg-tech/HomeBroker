@@ -89,6 +89,7 @@
 .response-error .result-message { color: #9e4149; }
 .response-error .result-message > span { background: #faebea; }
 .request-error { color: #9e4149; }
+.rate-limit-note { margin: 12px 0 0; color: #68776f; font-size: 12px; line-height: 1.6; }
 .response-value { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-top: 18px; padding: 13px 0; border-top: 1px solid #edf0ed; border-bottom: 1px solid #edf0ed; }
 .response-value span { color: #758179; font-size: 11px; }
 .response-value strong { color: #263f34; font-size: 17px; font-weight: 650; font-variant-numeric: tabular-nums; }

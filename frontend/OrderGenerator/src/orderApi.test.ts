@@ -19,6 +19,29 @@ function apiResponse(status: number, body: unknown) {
 }
 
 describe('sendOrder', () => {
+  it.each([
+    { retryAfter: '30', expectedSeconds: 30 },
+    { retryAfter: null, expectedSeconds: undefined },
+    { retryAfter: 'invalid', expectedSeconds: undefined },
+  ])('handles HTTP 429 with Retry-After $retryAfter without retrying', async ({ retryAfter, expectedSeconds }) => {
+    const body = {
+      sucesso: false,
+      exposicao_atual: 0,
+      msg_erro: 'Limite de requisições excedido. Aguarde antes de enviar outra ordem.',
+    }
+    const response = apiResponse(429, body)
+    if (retryAfter !== null) response.headers.set('Retry-After', retryAfter)
+    const fetchMock = vi.fn().mockResolvedValue(response)
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await sendOrder(order)
+
+    expect(result.status).toBe(429)
+    expect(result.body).toEqual(body)
+    expect(result.retryAfterSeconds).toBe(expectedSeconds)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
   it('reads the API contract from a business rejection response', async () => {
     const body = {
       sucesso: false,

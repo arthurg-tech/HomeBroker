@@ -469,7 +469,7 @@ public class OrderApiTests
         Assert.Equal("ProcessOrder", post.GetProperty("operationId").GetString());
         Assert.Contains("1000 bytes UTF-8", post.GetProperty("description").GetString());
         Assert.True(post.GetProperty("requestBody").GetProperty("content").TryGetProperty("application/json", out _));
-        foreach (var status in new[] { "200", "400", "422" })
+        foreach (var status in new[] { "200", "400", "422", "429" })
         {
             Assert.True(post.GetProperty("responses").GetProperty(status)
                 .GetProperty("content").TryGetProperty("application/json", out _));
