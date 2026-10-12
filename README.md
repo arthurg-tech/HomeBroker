@@ -104,7 +104,9 @@ Para conferir uma sequência, inicie o backend com estado zerado e envie uma com
 
 Em caso de falha de comunicação, confira a API antes de reenviar: a ordem pode ter sido processada mesmo sem a confirmação chegar ao navegador. Cada envio válido contabiliza uma nova ordem; o frontend não repete automaticamente uma requisição.
 
-Uma resposta **HTTP 429** aparece como **Limite de requisições atingido**: a ordem não foi processada e as exposições foram preservadas. Aguarde antes de tentar enviar novamente. Se a API informar `Retry-After` em segundos, a interface mostra a espera estimada. A exposição atual fica oculta nessa resposta, pois o zero do JSON é uma convenção de erro, sem consulta do ativo; o retorno completo continua disponível em **Ver resposta JSON**. O reenvio é manual.
+## Arquivos ignorados
+
+O [.gitignore](.gitignore) inclui `bin`, `obj`, `node_modules`, `dist`, configurações locais e logs. Arquivos `.env` são ignorados; `.env.example` e os arquivos de lock são mantidos no repositório para configuração e instalação reproduzível.
 
 ## Regras e decisões
 
@@ -148,9 +150,17 @@ Resposta a partir de exposição zero:
 
 As respostas previstas sempre contêm `sucesso`, `exposicao_atual` e `msg_erro`. Em uma entrada inválida com JSON válido dentro do limite de tamanho e ativo permitido identificável, a API retorna a exposição atual dele. JSON malformado, corpo acima do limite e ativo ausente ou inválido usam exposição zero como convenção de erro, sem consultar um saldo válido. Mensagens de erro não expõem detalhes internos ou stack traces.
 
+Quantidade e preço devem ser números JSON; strings numéricas, booleanos, null e campos obrigatórios ausentes são rejeitados. No JSON, preços `10` e `10.000` representam o mesmo valor e são aceitos; `10.001` é rejeitado. A interface aplica sua regra textual de até duas casas e formata valores monetários em reais com duas casas.
+
+Outros exemplos estão em [docs/requests.http](docs/requests.http). Use um cliente compatível com arquivos `.http`, como a extensão REST Client do VS Code, e execute os exemplos na ordem indicada após reiniciar o backend para zerar as exposições.
+
+## Features adicionais
+
+Além das funcionalidades do desafio, o endpoint de ordens inclui rate limiting por IP e limite de tamanho do corpo da requisição, detalhados abaixo.
+
 ### Rate limiting de ordens
 
-`POST /api/ordens` usa uma cota por IP com janela deslizante, sem fila de espera. A configuração padrão permite **60 requisições em uma janela de 60 segundos**, dividida em seis segmentos de dez segundos. Em `Development`, a cota é **120 requisições**, com a mesma janela. Esses são valores iniciais configuráveis, não limites definidos por benchmark.
+`POST /api/ordens` usa uma cota por IP com janela deslizante, sem fila de espera. A configuração padrão permite **60 requisições em uma janela de 60 segundos**, dividida em seis segmentos de dez segundos. Em `Development`, a cota é **30 requisições em uma janela de 60 segundos**, dividida em três segmentos de vinte segundos. Esses são valores iniciais configuráveis, não limites definidos por benchmark.
 
 As opções ficam em `RateLimiting:Orders` nos arquivos de configuração do backend:
 
@@ -184,6 +194,8 @@ A exposição de todos os ativos é preservada. O zero da resposta é uma conven
 
 A cota fica em memória, por processo, e é reiniciada junto com o backend. Clientes com o mesmo IP compartilham a cota; requisições sem IP identificado compartilham uma cota de fallback. O IP vem da conexão, sem interpretar diretamente `X-Forwarded-For`. Uma implantação atrás de proxy precisa configurar forwarded headers com proxies confiáveis antes do roteamento e do limitador.
 
+Uma resposta **HTTP 429** aparece como **Limite de requisições atingido**: a ordem não foi processada e as exposições foram preservadas. Aguarde antes de tentar enviar novamente. Se a API informar `Retry-After` em segundos, a interface mostra a espera estimada. A exposição atual fica oculta nessa resposta, pois o zero do JSON é uma convenção de erro, sem consulta do ativo; o retorno completo continua disponível em **Ver resposta JSON**. O reenvio é manual.
+
 ### Limite do corpo da ordem
 
 O corpo de `POST /api/ordens` aceita até **1.000 bytes UTF-8**, incluindo espaços e campos adicionais. O limite é inclusivo e aplicado com ou sem `Content-Length`, inclusive em envios chunked. Há margem para os quatro campos da ordem sem permitir que documentos grandes sejam carregados integralmente pelo parser.
@@ -199,10 +211,6 @@ Um `Content-Length` acima do limite permite rejeição antecipada; nos demais ca
 ```
 
 Esse zero é uma convenção de erro: o corpo rejeitado não foi desserializado e não identifica uma exposição consultada. Limites do servidor ou proxy continuam independentes dessa proteção aplicada pelo endpoint.
-
-Quantidade e preço devem ser números JSON; strings numéricas, booleanos, null e campos obrigatórios ausentes são rejeitados. No JSON, preços `10` e `10.000` representam o mesmo valor e são aceitos; `10.001` é rejeitado. A interface aplica sua regra textual de até duas casas e formata valores monetários em reais com duas casas.
-
-Outros exemplos estão em [docs/requests.http](docs/requests.http). Use um cliente compatível com arquivos `.http`, como a extensão REST Client do VS Code, e execute os exemplos na ordem indicada após reiniciar o backend para zerar as exposições.
 
 ## Estrutura do projeto
 
@@ -237,19 +245,3 @@ npm --prefix frontend/OrderGenerator run test:watch
 Os testes HTTP usam `WebApplicationFactory` com uma aplicação nova por cenário; sequências e requisições concorrentes compartilham o mesmo host. O Vitest executa os testes frontend de `tests/` em jsdom, com respostas simuladas da API. As suítes podem executar sem iniciar os serviços manualmente.
 
 O build do frontend verifica os tipos da aplicação, das configurações e dos testes antes de gerar os arquivos de produção em `frontend/OrderGenerator/dist`.
-
-Na última verificação da Fase 09, passaram 120 testes backend, 48 testes frontend, lint e build. Esses números registram aquela execução.
-
-## Arquivos ignorados
-
-O [.gitignore](.gitignore) inclui `bin`, `obj`, `node_modules`, `dist`, configurações locais e logs. Arquivos `.env` são ignorados; `.env.example` e os arquivos de lock são mantidos no repositório para configuração e instalação reproduzível.
-
-## Entrega e apresentação
-
-Conforme as instruções do desafio:
-
-1. Adicione o link deste repositório com a solução na questão da plataforma.
-2. Revise o README e faça o commit final antes da entrega.
-3. Envie a solução e aguarde as próximas instruções. Se houver apresentação em vídeo, a gravação estará disponível na tela de entrega após adicionar o link do repositório.
-
-Para dúvidas sobre o processo, entre em contato com um especialista pelo chat da plataforma Coodesh.
