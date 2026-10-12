@@ -295,6 +295,53 @@ describe('OrderGenerator form', () => {
     expect(screen.getByRole('button', { name: 'Enviar ordem' })).toBeEnabled()
   })
 
+  it.each([null, '30'])('presents rate limiting with Retry-After %s and allows a manual retry', async (retryAfter) => {
+    const message = 'Limite de requisições excedido. Aguarde antes de enviar outra ordem.'
+    const rejected = { sucesso: false, exposicao_atual: 0, msg_erro: message }
+    const response = new Response(JSON.stringify(rejected), {
+      status: 429,
+      headers: { 'Content-Type': 'application/json' },
+    })
+    if (retryAfter !== null) response.headers.set('Retry-After', retryAfter)
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response)
+      .mockResolvedValueOnce(successfulResponse(10))
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.type(screen.getByRole('textbox', { name: 'Quantidade' }), '1')
+    await user.type(screen.getByRole('textbox', { name: 'Preço por ação' }), '10,00')
+    await user.click(screen.getByRole('button', { name: 'Enviar ordem' }))
+
+    expect(await screen.findByRole('heading', { name: 'Limite de requisições atingido' })).toBeInTheDocument()
+    expect(screen.getByText('HTTP 429')).toBeInTheDocument()
+    expect(screen.getByText(message)).toBeInTheDocument()
+    expect(screen.getByText(/A ordem não foi processada\. A exposição dos ativos foi preservada\./)).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Falha de comunicação' })).not.toBeInTheDocument()
+    expect(screen.queryByText('Exposição atual')).not.toBeInTheDocument()
+    expect(screen.queryByText(/^R\$\s*0,00$/)).not.toBeInTheDocument()
+    if (retryAfter !== null) {
+      expect(screen.getByText(/Espera estimada pela API: 30 segundos\./)).toBeInTheDocument()
+    } else {
+      expect(screen.queryByText(/Espera estimada pela API:/)).not.toBeInTheDocument()
+    }
+
+    await user.click(screen.getByText('Ver resposta JSON'))
+    expect(screen.getByText((_content, element) => element?.tagName === 'PRE'))
+      .toHaveTextContent('"exposicao_atual": 0')
+    expect(screen.getByRole('button', { name: 'Enviar ordem' })).toBeEnabled()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    await user.click(screen.getByRole('button', { name: 'Enviar ordem' }))
+
+    expect(await screen.findByText('Ordem aceita com sucesso.')).toBeInTheDocument()
+    expect(screen.getByText('HTTP 200')).toBeInTheDocument()
+    expect(screen.getByText('Exposição atual')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Limite de requisições atingido' })).not.toBeInTheDocument()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
   it('shows the pending state and disables submission until the API responds', async () => {
     let resolveResponse!: (response: Response) => void
     const fetchMock = vi.fn(() => new Promise<Response>((resolve) => {
