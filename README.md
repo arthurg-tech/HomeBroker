@@ -104,6 +104,8 @@ Para conferir uma sequência, inicie o backend com estado zerado e envie uma com
 
 Em caso de falha de comunicação, confira a API antes de reenviar: a ordem pode ter sido processada mesmo sem a confirmação chegar ao navegador. Cada envio válido contabiliza uma nova ordem; o frontend não repete automaticamente uma requisição.
 
+Uma resposta **HTTP 429** aparece como **Limite de requisições atingido**: a ordem não foi processada e as exposições foram preservadas. Aguarde antes de tentar enviar novamente. Se a API informar `Retry-After` em segundos, a interface mostra a espera estimada. A exposição atual fica oculta nessa resposta, pois o zero do JSON é uma convenção de erro, sem consulta do ativo; o retorno completo continua disponível em **Ver resposta JSON**. O reenvio é manual.
+
 ## Regras e decisões
 
 - Ativos permitidos: `PETR4`, `VALE3` e `VIIA4`. A API usa `C` para compra e `V` para venda; a interface mostra Compra/Venda.
