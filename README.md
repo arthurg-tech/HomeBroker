@@ -65,7 +65,8 @@ npm run dev
 |---|---|
 | OrderGenerator | http://localhost:5173 |
 | OrderAccumulator | http://localhost:5177 |
-| Documento OpenAPI, em desenvolvimento | http://localhost:5177/openapi/v1.json |
+| Swagger UI | http://localhost:5177/swagger |
+| Documento OpenAPI | http://localhost:5177/openapi/v1.json |
 
 Abra `http://localhost:5173` no navegador. `Ctrl+C` encerra os dois processos. O comando usa `concurrently` e funciona em Windows/Linux.
 
@@ -84,6 +85,12 @@ npm --prefix frontend/OrderGenerator run dev
 ```
 
 O perfil HTTP permite testar localmente sem certificado. O perfil HTTPS existente usa `https://localhost:7055`.
+
+### Documentação interativa da API
+
+Com a API em execução, abra [Swagger UI](http://localhost:5177/swagger) para consultar os modelos, os status de resposta e testar `POST /api/ordens` com **Try it out** e **Execute**. Os envios processam ordens e atualizam a exposição em memória, assim como os envios pelo frontend.
+
+A interface usa o documento existente em `/openapi/v1.json`. Tanto o Swagger UI quanto o documento OpenAPI ficam disponíveis apenas no ambiente `Development`, já configurado nos perfis locais `http` e `https`.
 
 ## Como usar
 

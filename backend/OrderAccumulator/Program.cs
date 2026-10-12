@@ -22,6 +22,11 @@ if (app.Environment.IsDevelopment())
 {
     app.UseCors("OrderGenerator");
     app.MapOpenApi();
+    app.UseSwaggerUI(options =>
+    {
+        options.SwaggerEndpoint("/openapi/v1.json", "OrderAccumulator v1");
+        options.DocumentTitle = "OrderAccumulator — Swagger UI";
+    });
 }
 else
 {
