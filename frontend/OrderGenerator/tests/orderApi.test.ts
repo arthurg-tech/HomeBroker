@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { sendOrder } from './orderApi'
-import type { OrderRequest } from './orderValidation'
+import { sendOrder } from '../src/orderApi'
+import type { OrderRequest } from '../src/orderValidation'
 
 afterEach(() => vi.unstubAllGlobals())
 

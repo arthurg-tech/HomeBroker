@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parsePriceToCents, validateOrderForm, type OrderFormValues } from './orderValidation'
+import { parsePriceToCents, validateOrderForm, type OrderFormValues } from '../src/orderValidation'
 
 describe('price validation', () => {
   it.each([

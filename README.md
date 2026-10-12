@@ -212,6 +212,8 @@ Outros exemplos estão em [docs/requests.http](docs/requests.http). Use um clien
 | `backend/OrderAccumulator.Tests/Unit` | Testes do validador e do serviço, incluindo concorrência. |
 | `backend/OrderAccumulator.Tests/Integration` | Testes HTTP do pipeline ASP.NET Core. |
 | `frontend/OrderGenerator` | Formulário React, validação local e comunicação com a API. |
+| `frontend/OrderGenerator/src` | Código e assets da aplicação frontend. |
+| `frontend/OrderGenerator/tests` | Testes frontend e setup compartilhado do Vitest. |
 | `HomeBroker.slnx` | Solução .NET na raiz do repositório. |
 | `docs/requests.http` | Exemplos reproduzíveis de requisições. |
 
@@ -226,9 +228,17 @@ npm --prefix frontend/OrderGenerator run lint
 npm --prefix frontend/OrderGenerator run build
 ```
 
-Os testes HTTP usam `WebApplicationFactory` com uma aplicação nova por cenário; sequências e requisições concorrentes compartilham o mesmo host. Os testes frontend usam jsdom e respostas simuladas da API. As suítes podem executar sem iniciar os serviços manualmente.
+Para executar os testes frontend em modo contínuo durante o desenvolvimento:
 
-Na última verificação da Fase 09, passaram 120 testes backend, 48 testes frontend, lint e build. Esses números registram aquela execução. O build gera os arquivos do frontend em `frontend/OrderGenerator/dist`.
+```sh
+npm --prefix frontend/OrderGenerator run test:watch
+```
+
+Os testes HTTP usam `WebApplicationFactory` com uma aplicação nova por cenário; sequências e requisições concorrentes compartilham o mesmo host. O Vitest executa os testes frontend de `tests/` em jsdom, com respostas simuladas da API. As suítes podem executar sem iniciar os serviços manualmente.
+
+O build do frontend verifica os tipos da aplicação, das configurações e dos testes antes de gerar os arquivos de produção em `frontend/OrderGenerator/dist`.
+
+Na última verificação da Fase 09, passaram 120 testes backend, 48 testes frontend, lint e build. Esses números registram aquela execução.
 
 ## Arquivos ignorados
 
