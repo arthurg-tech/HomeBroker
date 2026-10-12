@@ -142,8 +142,47 @@ Resposta a partir de exposição zero:
 | 200 | Ordem aceita; `sucesso: true`, mensagem vazia. | Atualizada. |
 | 400 | Entrada inválida; `sucesso: false`, mensagem explicativa. | Preservada. |
 | 422 | Limite excedido; `sucesso: false`, mensagem explicativa. | Preservada. |
+| 429 | Cota de requisições excedida; `sucesso: false`, mensagem explicativa. | Preservada; resposta usa zero por convenção. |
 
 As respostas previstas sempre contêm `sucesso`, `exposicao_atual` e `msg_erro`. Em uma entrada inválida com JSON válido dentro do limite de tamanho e ativo permitido identificável, a API retorna a exposição atual dele. JSON malformado, corpo acima do limite e ativo ausente ou inválido usam exposição zero como convenção de erro, sem consultar um saldo válido. Mensagens de erro não expõem detalhes internos ou stack traces.
+
+### Rate limiting de ordens
+
+`POST /api/ordens` usa uma cota por IP com janela deslizante, sem fila de espera. A configuração padrão permite **60 requisições em uma janela de 60 segundos**, dividida em seis segmentos de dez segundos. Em `Development`, a cota é **120 requisições**, com a mesma janela. Esses são valores iniciais configuráveis, não limites definidos por benchmark.
+
+As opções ficam em `RateLimiting:Orders` nos arquivos de configuração do backend:
+
+```json
+{
+  "RateLimiting": {
+    "Orders": {
+      "PermitLimit": 60,
+      "WindowSeconds": 60,
+      "SegmentsPerWindow": 6
+    }
+  }
+}
+```
+
+Os três valores devem ser inteiros positivos; `SegmentsPerWindow` não pode exceder `WindowSeconds`, para que cada segmento tenha pelo menos um segundo. Uma configuração inválida impede a inicialização. Variáveis de ambiente também podem sobrescrever as opções, por exemplo `RateLimiting__Orders__PermitLimit`.
+
+Toda requisição que chega ao limitador nesse endpoint consome a cota quando admitida, inclusive ordens que depois retornam 400 ou 422. Preflights CORS e a documentação Swagger/OpenAPI não consomem essa cota.
+
+Quando a cota é excedida, a API retorna **HTTP 429** antes de ler o corpo ou processar a ordem:
+
+```json
+{
+  "sucesso": false,
+  "exposicao_atual": 0,
+  "msg_erro": "Limite de requisições excedido. Aguarde antes de enviar outra ordem."
+}
+```
+
+A exposição de todos os ativos é preservada. O zero da resposta é uma convenção de erro, pois o ativo não foi identificado. Quando disponível, `Retry-After` informa a estimativa de espera em segundos inteiros, arredondada para cima; o CORS de desenvolvimento expõe esse header para o frontend. A estimativa não reserva uma vaga para um envio futuro.
+
+A cota fica em memória, por processo, e é reiniciada junto com o backend. Clientes com o mesmo IP compartilham a cota; requisições sem IP identificado compartilham uma cota de fallback. O IP vem da conexão, sem interpretar diretamente `X-Forwarded-For`. Uma implantação atrás de proxy precisa configurar forwarded headers com proxies confiáveis antes do roteamento e do limitador.
+
+### Limite do corpo da ordem
 
 O corpo de `POST /api/ordens` aceita até **1.000 bytes UTF-8**, incluindo espaços e campos adicionais. O limite é inclusivo e aplicado com ou sem `Content-Length`, inclusive em envios chunked. Há margem para os quatro campos da ordem sem permitir que documentos grandes sejam carregados integralmente pelo parser.
 

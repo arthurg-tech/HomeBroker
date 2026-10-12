@@ -3,6 +3,7 @@ using Microsoft.Extensions.Options;
 using Microsoft.OpenApi;
 using OrderAccumulator.Application.Orders;
 using OrderAccumulator.Contracts;
+using OrderAccumulator.RateLimiting;
 using OrderAccumulator.Services;
 using OrderAccumulator.Validation;
 using JsonOptions = Microsoft.AspNetCore.Http.Json.JsonOptions;
@@ -13,10 +14,13 @@ public static class OrderEndpoints
 {
     public static RouteHandlerBuilder MapOrderEndpoints(this IEndpointRouteBuilder app) => app
         .MapPost("/api/ordens", ProcessAsync)
+        .RequireRateLimiting(OrderRateLimitPolicy.PolicyName)
         .WithName("ProcessOrder")
         .WithSummary("Processa uma ordem e retorna a exposição financeira do ativo.")
         .WithDescription($"O corpo JSON deve ter no máximo {OrderRequestBodyReader.MaxBodySizeBytes} bytes UTF-8. "
-            + "Corpos maiores recebem HTTP 400, com exposicao_atual igual a zero por convenção, sem aplicar a ordem.")
+            + "Corpos maiores recebem HTTP 400, com exposicao_atual igual a zero por convenção, sem aplicar a ordem. "
+            + "O endpoint limita requisições por IP. Ao exceder a cota, retorna HTTP 429 sem ler ou processar a ordem, "
+            + "com exposicao_atual igual a zero por convenção e Retry-After em segundos quando disponível.")
         .AddOpenApiOperationTransformer(async (operation, context, cancellationToken) =>
         {
             var schema = await context.GetOrCreateSchemaAsync(typeof(OrderRequest),
@@ -36,7 +40,8 @@ public static class OrderEndpoints
         })
         .Produces<OrderResponse>(StatusCodes.Status200OK)
         .Produces<OrderResponse>(StatusCodes.Status400BadRequest)
-        .Produces<OrderResponse>(StatusCodes.Status422UnprocessableEntity);
+        .Produces<OrderResponse>(StatusCodes.Status422UnprocessableEntity)
+        .Produces<OrderResponse>(StatusCodes.Status429TooManyRequests);
 
     private static async Task<IResult> ProcessAsync(HttpRequest request, ExposureService service,
         IOptions<JsonOptions> options, CancellationToken cancellationToken)
